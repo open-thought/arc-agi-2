@@ -1,0 +1,9 @@
+# Byte-compiled / optimized
+__pycache__/
+*.pyc
+
+# Environments
+.env
+.venv
+
+data/
