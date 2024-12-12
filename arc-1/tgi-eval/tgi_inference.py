@@ -20,6 +20,14 @@ def sample_tgi(
     return response_json["generated_text"]
 
 
+def get_models(base_url: str = "http://127.0.0.1:8080") -> list[dict]:
+    url = base_url + "/v1/models"
+    r = requests.get(url)
+    r.raise_for_status()
+    response_json = r.json()
+    return response_json["data"]
+
+
 def format_board(
     board: Board,
     alphabet: list[str],
@@ -115,7 +123,7 @@ def format_riddle_input(
     if chatml:
         buffer = [
             "<|im_start|>user\n"
-            "You like to solve puzzles. Find the underying abstract input and output transformation. Look at the following input-output pairs:\n",
+            "You like to solve puzzles. Find the underlying abstract input and output transformation. Look at the following input-output pairs:\n",
             input_examples,
             f"Now consider the last input examples and deduce its output. Think deeply! Directly generate output board values.\ninput{test_index}: ",
             test_input,
@@ -138,13 +146,13 @@ def format_riddle_input(
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--generate_url", type=str, default="http://127.0.0.1:8080/generate"
+        "--base_url", type=str, default="http://127.0.0.1:8080"
     )
     parser.add_argument("--max_new_tokens", type=int, default=600)
     parser.add_argument("--min_new_tokens", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--top_p", type=float, default=0.9)
-    parser.add_argument("--alphabet", type=str, default="0123456789")
+    parser.add_argument("--alphabet", type=str, default='["0","1","2","3","4","5","6","7","8","9"]')
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--col_delimiter", type=str, default=",")
     parser.add_argument("--row_delimiter", type=str, default=",\n")
@@ -158,16 +166,19 @@ def parse_args():
 
 def main():
     args = parse_args()
-    print(args)
 
-    generate_url = args.generate_url
+    model_id = get_models(base_url=args.base_url)[0]["id"]
+    print(f"Model ID: {model_id}")
+
+    generate_url = args.base_url + "/generate"
     generate_args = {
         "max_new_tokens": args.max_new_tokens,
         "min_new_tokens": args.min_new_tokens,
-        "do_sample": True,
-        "temperature": args.temperature,
-        "top_p": args.top_p,
+        "do_sample": args.temperature > 0
     }
+    if args.temperature > 0:
+        generate_args["temperature"] =  args.temperature
+        generate_args["top_p"] = args.top_p
 
     riddle_directories = ["evaluation", "training"]
     riddle_ids = dataset.get_riddle_ids(riddle_directories)
@@ -179,7 +190,9 @@ def main():
     skipped = 0
     correct_ids = []
 
-    alphabet = [c for c in args.alphabet]
+    print(f"Alphabet: {args.alphabet}")
+    alphabet = json.loads(args.alphabet)
+    assert isinstance(alphabet, list)
     assert len(alphabet) >= 10
 
     col_delimiter = args.col_delimiter
@@ -236,13 +249,15 @@ def main():
 
             try:
                 output = sample_tgi(x, generate_args, generate_url=generate_url)
-            except:
+            except Exception as e:
+                print("Sampling failed:", e)
                 continue
 
-            # print("output:", output)
+            #print("output:", output)
+            #print("search:", y)
 
             try:
-                index = output.index(y)
+                index = output.replace(" ", "").index(y)    # compare without spaces
             except:
                 index = -1
 

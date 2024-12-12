@@ -2,7 +2,7 @@
 
 ## Extracting the Core Idea of ARC-AGI-1 Riddles
 
-This folder contains the results of an experiment to generate textual descriptions of the core-ideas of all ARC-AGI-1 riddles with an LLM. The hand-crafted generators and verifiers of Michael Hodel's [michaelhodel/re-arc](https://github.com/michaelhodel/re-arc) were first LLM-augmented with line-by-line source comments and then passed as reference in the prompt to generate the the core idea descriptions.
+This folder contains the results of an experiment to generate textual descriptions of the core-ideas of all ARC-AGI-1 riddles with an LLM (`claude-3-5-sonnet-20240620`). The hand-crafted generators and verifiers of Michael Hodel's [michaelhodel/re-arc](https://github.com/michaelhodel/re-arc) were first LLM-augmented with line-by-line source comments and then passed as reference in the prompt to generate the the core idea descriptions.
 
 The core-ideas (together with the annotated generators and verifiers) can for example be used as seed examples for open-ended LLM based synthetic riddle generation.
 
