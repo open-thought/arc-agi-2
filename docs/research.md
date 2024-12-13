@@ -10,6 +10,8 @@
 - 04 Nov 2024 [Combining Induction and Transduction for Abstract Reasoning](https://arxiv.org/abs/2411.02272)
 - 08 Oct 2024 [Tackling the Abstraction and Reasoning Corpus with Vision Transformers: the Importance of 2D Representation, Positions, and Objects](https://arxiv.org/abs/2410.06405)
 - 10 Apr 2024 RE-ARC: [Addressing the Abstraction and Reasoning Corpus via Procedural Example Generation](https://arxiv.org/abs/2404.07353)
+- 05 Feb 2024 [Neural networks for abstraction and reasoning: Towards broad generalization in machines](https://arxiv.org/abs/2402.03507)
+- 15 Jul 2020 [DreamCoder: Growing generalizable, interpretable knowledge with wake-sleep Bayesian program learning](https://arxiv.org/abs/2006.08381)
 - 05 Nov 2019 [On the Measure of Intelligence](https://arxiv.org/abs/1911.01547)
 
 
@@ -27,7 +29,8 @@
 ## Repositories
 
 - RE-ARC: [michaelhodel/re-arc](https://github.com/michaelhodel/re-arc) by [Michael Hodel](https://x.com/bayesilicon)
-- ARC dataset collection: [ARC-Interactive](https://neoneye.github.io/arc/), [neoneye/arc-dataset-collection](https://github.com/neoneye/arc-dataset-collection) by [Simon Strandgaard](https://x.com/SimonStran36407)
+- arckit: [mxbi/arckit](https://github.com/mxbi/arckit)
+- ARC dataset collection: [ARC-Interactive](https://neoneye.github.io/arc/), [neoneye/arc-dataset-collection](https://github.com/neoneye/arc-dataset-collection) ([sources](https://github.com/neoneye/arc-notes/tree/main/datasets)) by [Simon Strandgaard](https://x.com/SimonStran36407)
 - ARC-AGI-1 dataset: [fchollet/ARC-AGI](https://github.com/fchollet/ARC-AGI)
 - old 2022 work by YK arc-community: [wiki](https://github.com/arc-community/wiki/wiki), [arc-community/arc-research](https://github.com/arc-community/arc-research)
 
