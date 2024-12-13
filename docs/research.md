@@ -26,13 +26,19 @@
 
 ## Repositories
 
-- RE-ARC: [michaelhodel/re-arc](https://github.com/michaelhodel/re-arc)
+- RE-ARC: [michaelhodel/re-arc](https://github.com/michaelhodel/re-arc) by [Michael Hodel](https://x.com/bayesilicon)
+- ARC dataset collection: [ARC-Interactive](https://neoneye.github.io/arc/), [neoneye/arc-dataset-collection](https://github.com/neoneye/arc-dataset-collection) by [Simon Strandgaard](https://x.com/SimonStran36407)
 - ARC-AGI-1 dataset: [fchollet/ARC-AGI](https://github.com/fchollet/ARC-AGI)
-- old 2022 work by YK arc-community: [arc-community/arc-research](https://github.com/arc-community/arc-research)
+- old 2022 work by YK arc-community: [wiki](https://github.com/arc-community/wiki/wiki), [arc-community/arc-research](https://github.com/arc-community/arc-research)
+
+
+## Interesting Links
+
+- Browser game: [The ARC Game](https://volotat.github.io/ARC-Game/) by [Alexey Borsky](https://x.com/volotat) (repo: [volotat/ARC-Game](https://github.com/volotat/ARC-Game))
 
 
 ## Videos
 
-- 06 Nov 2024, MLST François Chollet interview: [Pattern Recognition vs True Intelligence](https://youtu.be/JTU8Ha4Jyfc)
-- 16 Jul 2024, MLST Jack Cole / Minds AI Interview: [Chollet's ARC Challenge + Current Winners](https://youtu.be/jSAT_RuJ_Cg)
-- 06 Jul 2024, MLST Ryan Greenblatt interview: [Solving Chollet's ARC-AGI with GPT4o](https://youtu.be/z9j3wB1RRGA)
+- 06 Nov 2024, MLST [François Chollet](https://x.com/fchollet) interview: [Pattern Recognition vs True Intelligence](https://youtu.be/JTU8Ha4Jyfc)
+- 16 Jul 2024, MLST [Jack Cole](https://x.com/MindsAI_Jack) / Minds AI Interview: [Chollet's ARC Challenge + Current Winners](https://youtu.be/jSAT_RuJ_Cg)
+- 06 Jul 2024, MLST [Ryan Greenblatt](https://x.com/RyanPGreenblatt) interview: [Solving Chollet's ARC-AGI with GPT4o](https://youtu.be/z9j3wB1RRGA)
