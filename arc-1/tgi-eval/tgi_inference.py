@@ -1,3 +1,4 @@
+import re
 import argparse
 from typing import Any
 from pathlib import Path
@@ -33,9 +34,13 @@ def format_board(
     alphabet: list[str],
     col_delimiter: str = ",",
     row_delimiter: str = ",\n",
+    with_board_dim: bool = True,
 ) -> str:
     h, w = board.shape
-    buffer = [f"{h}x{w}\n["]
+    buffer = []
+    if with_board_dim:
+        buffer.append(f"{h}x{w}\n")
+    buffer.append(f"[")
     for row in range(h):
         if row > 0 and row_delimiter:
             buffer.append(row_delimiter)
@@ -116,18 +121,30 @@ def format_riddle_input(
         alphabet=alphabet,
         col_delimiter=col_delimiter,
         row_delimiter=row_delimiter,
+        with_board_dim=False,
     )
 
     test_index = len(riddle.train) + 1
 
     if chatml:
+
+        # earlier version of prompt:
+        # buffer = [
+        #     "<|im_start|>user\n"
+        #     "You like to solve puzzles. Find the underlying abstract input and output transformation. Look at the following input-output pairs:\n",
+        #     input_examples,
+        #     f"Now consider the last input examples and deduce its output. Think deeply! Directly generate output board values.\ninput{test_index}: ",
+        #     test_input,
+        #     f"<|im_end|>\n<|im_start|>assistant\noutput{test_index}: ",
+        # ]
+
         buffer = [
             "<|im_start|>user\n"
-            "You like to solve puzzles. Find the underlying abstract input and output transformation. Look at the following input-output pairs:\n",
+            "As an experienced mathematician you are presented with a set of 2D input/output board pairs. Find the input-to-output transformation rule:\n",
             input_examples,
-            f"Now consider the last input examples and deduce its output. Think deeply! Directly generate output board values.\ninput{test_index}: ",
+            f"Now you consider the last input example. You must deduce the corresponding output for it.\ninput{test_index}: ",
             test_input,
-            f"<|im_end|>\n<|im_start|>assistant\noutput{test_index}: ",
+            f"<|im_end|>\n<|im_start|>assistant\n",
         ]
     else:
         buffer = [
@@ -136,8 +153,11 @@ def format_riddle_input(
             f"\nNow you consider the last input example. Your task is to deduce the corresponding output.\ninput{test_index}: ",
             test_input,
             "\nAfter thinking thoroughly about the abstract transformation you come to the conclusion that it must be:"
-            f"\n\noutput{test_index}: ",
         ]
+
+    cue_output = False
+    if cue_output:
+        buffer.append(f"output{test_index}: ")
 
     x = "".join(buffer)
     return x, test_output
@@ -190,7 +210,6 @@ def main():
     skipped = 0
     correct_ids = []
 
-    print(f"Alphabet: {args.alphabet}")
     alphabet = json.loads(args.alphabet)
     assert isinstance(alphabet, list)
     assert len(alphabet) >= 10
@@ -257,7 +276,9 @@ def main():
             #print("search:", y)
 
             try:
-                index = output.replace(" ", "").index(y)    # compare without spaces
+                output_ = re.sub(r"\s+", "", output)
+                y_ = re.sub(r"\s+", "", y)
+                index = output_.index(y_) # compare ignoring whitespaces (e.g. spaces and newlines)
             except:
                 index = -1
 
