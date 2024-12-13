@@ -18,7 +18,7 @@
 ## ARC price 2024
 
 - [Official results & Code and Paper Links](https://arcprize.org/2024-results)
-- [ARC Price 2024 Leaderboard](https://www.kaggle.com/competitions/arc-prize-2024/leaderboard)
+- [ARC Price 2024 Kaggle Leaderboard](https://www.kaggle.com/competitions/arc-prize-2024/leaderboard) (with paper links)
 - [ARC Prize 2024: Technical Report](https://arxiv.org/abs/2412.04604)
 - 1st place the ARChitects (Daniel Franzen, Jan Disselhoff, and David Hartmann): [da-fr/arc-prize-2024](https://github.com/da-fr/arc-prize-2024)
 - 2nd place Guillermo Barbadillo: [ironbar/arc24](https://github.com/ironbar/arc24), [05_Solution_Summary](https://ironbar.github.io/arc24/05_Solution_Summary/)
@@ -45,3 +45,9 @@
 - 06 Nov 2024, MLST [François Chollet](https://x.com/fchollet) interview: [Pattern Recognition vs True Intelligence](https://youtu.be/JTU8Ha4Jyfc)
 - 16 Jul 2024, MLST [Jack Cole](https://x.com/MindsAI_Jack) / Minds AI Interview: [Chollet's ARC Challenge + Current Winners](https://youtu.be/jSAT_RuJ_Cg)
 - 06 Jul 2024, MLST [Ryan Greenblatt](https://x.com/RyanPGreenblatt) interview: [Solving Chollet's ARC-AGI with GPT4o](https://youtu.be/z9j3wB1RRGA)
+
+
+## Other ARC material lists
+
+- [arcprize/refs](https://geometor.github.io/arcprize/refs/) by geometor
+- [Awesome ARC](https://github.com/neoneye/arc-notes/tree/main/awesome) by neoneye
