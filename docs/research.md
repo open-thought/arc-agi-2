@@ -3,6 +3,7 @@
 
 ## Papers
 
+- 10 Dec 2024 [ConceptSearch: Towards Efficient Program Search Using LLMs for Abstraction and Reasoning Corpus (ARC)](https://arxiv.org/abs/2412.07322)
 - 05 Dec 2024 [ARC Prize 2024: Technical Report](https://arxiv.org/abs/2412.04604)
 - 13 Nov 2024 [The LLM ARChitect: Solving ARC-AGI Is A Matter of Perspective](https://da-fr.github.io/arc-prize-2024/the_architects.pdf)
 - 13 Nov 2024 [Searching Latent Program Spaces](https://arxiv.org/abs/2411.08706)
