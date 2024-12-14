@@ -3,6 +3,7 @@
 ## Repository Index
 
 - [ARC-AGI Material Link List](./docs/research.md)
+- [Brainstorming/Ideas (Dec 2024)](./docs/ideas.md)
 - [tgi-eval](./arc-1/tgi-eval/) - using ARC-AGI-1 to evaluate LLMs
 - [Annotated RE-ARC](./arc-1/annotated-re-arc/README.md)
 
