@@ -1,32 +1,36 @@
+import aiohttp
+import asyncio
 import re
 import argparse
-from typing import Any
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Optional
 from pathlib import Path
 import json
-import requests
+import time
 
 from arc.utils import dataset
 from arc.interface import Riddle, Board, BoardPair
 
 
-def sample_tgi(
+async def sample_tgi(
+    session: aiohttp.ClientSession,
     prompt: str,
     sampling_params: dict[str, Any],
     generate_url: str = "http://127.0.0.1:8080/generate",
-) -> str:
+) -> Awaitable[str]:
     data = {"inputs": prompt, "parameters": sampling_params}
-    r = requests.post(generate_url, json=data)
-    r.raise_for_status()
-    response_json = r.json()
-    return response_json["generated_text"]
+    async with session.post(generate_url, json=data) as r:
+        r.raise_for_status()
+        response_json = await r.json()
+        return response_json["generated_text"]
 
 
-def get_models(base_url: str = "http://127.0.0.1:8080") -> list[dict]:
+async def get_models(base_url: str = "http://127.0.0.1:8080") -> Awaitable[list[dict]]:
     url = base_url + "/v1/models"
-    r = requests.get(url)
-    r.raise_for_status()
-    response_json = r.json()
-    return response_json["data"]
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as r:
+            r.raise_for_status()
+            response_json = await r.json()
+            return response_json["data"]
 
 
 def format_board(
@@ -152,7 +156,7 @@ def format_riddle_input(
             input_examples,
             f"\nNow you consider the last input example. Your task is to deduce the corresponding output.\ninput{test_index}: ",
             test_input,
-            "\nAfter thinking thoroughly about the abstract transformation you come to the conclusion that it must be:"
+            "\nAfter thinking thoroughly about the abstract transformation you come to the conclusion that it must be:",
         ]
 
     cue_output = False
@@ -165,14 +169,14 @@ def format_riddle_input(
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--base_url", type=str, default="http://127.0.0.1:8080"
-    )
+    parser.add_argument("--base_url", type=str, default="http://127.0.0.1:8080")
     parser.add_argument("--max_new_tokens", type=int, default=600)
     parser.add_argument("--min_new_tokens", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--top_p", type=float, default=0.9)
-    parser.add_argument("--alphabet", type=str, default='["0","1","2","3","4","5","6","7","8","9"]')
+    parser.add_argument(
+        "--alphabet", type=str, default='["0","1","2","3","4","5","6","7","8","9"]'
+    )
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--col_delimiter", type=str, default=",")
     parser.add_argument("--row_delimiter", type=str, default=",\n")
@@ -184,20 +188,182 @@ def parse_args():
     return args
 
 
-def main():
+def dump_jsonl(file_name: str | Path, lines: list):
+    file_name = Path(file_name)
+    with file_name.open("w", encoding="UTF-8") as f:
+        for l in lines:
+            json.dump(l, f)
+            f.write("\n")
+
+
+async def process_queue(
+    job_generator: AsyncIterator[Any], worker_func: Callable, max_concurrent: int = 3
+) -> list:
+    """
+    Process a large number of jobs with limited concurrency.
+
+    Args:
+        job_generator: Async iterator yielding jobs to process
+        worker_func: Async function to process each job
+        max_concurrent: Maximum number of concurrent jobs
+    """
+    active_tasks = set()
+    results = []
+
+    async def run_job(job):
+        try:
+            result = await worker_func(**job)
+            results.append(result)
+        finally:
+            if task in active_tasks:
+                active_tasks.remove(task)
+
+    # Process jobs until generator is exhausted
+    try:
+        for job in job_generator:
+            # If we're at capacity, wait for a task to complete
+            while len(active_tasks) >= max_concurrent:
+                done, _ = await asyncio.wait(
+                    active_tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                # Remove completed tasks
+                active_tasks.difference_update(done)
+
+            # Create new task
+            task = asyncio.create_task(run_job(job))
+            active_tasks.add(task)
+
+        # Wait for remaining tasks to complete
+        if active_tasks:
+            await asyncio.wait(active_tasks)
+
+    except Exception as e:
+        # Cancel any remaining tasks on error
+        for task in active_tasks:
+            task.cancel()
+        raise e
+
+    return results
+
+
+class Stats:
+    def __init__(self):
+        self.correct = 0
+        self.skipped = 0
+        self.correct_ids = []
+
+
+async def sample_concurrent(
+    *,
+    riddle_ids: list[str],
+    alphabet: list[str],
+    col_delimiter: str,
+    row_delimiter: str,
+    chatml: bool,
+    generate_url: str,
+    generate_args: dict,
+    cutoff_length: int,
+    jsonl_out: Optional[str],
+    num_trials: int = 1,
+    max_concurrent: int = 2,
+):
+    stats = Stats()
+    log_lines = []
+
+    async with aiohttp.ClientSession() as session:
+
+        def generate_sampling_jobs() -> Iterator[dict]:
+            for i, id in enumerate(riddle_ids):
+                riddle = dataset.load_riddle_from_id(id)
+                x, y = format_riddle_input(
+                    riddle,
+                    alphabet,
+                    col_delimiter=col_delimiter,
+                    row_delimiter=row_delimiter,
+                    chatml=chatml,
+                )
+                yield ({"index": i, "id": id, "input": x, "target": y})
+
+        async def sampling_worker(
+            *, index: int, id: str, input: str, target: str
+        ) -> str:
+            if len(input) > cutoff_length:
+                print(f"skipping {id} ...")
+                stats.skipped += 1
+                return
+
+            for j in range(num_trials):
+                if num_trials > 1:
+                    print(f"Try {j+1} of {num_trials}")
+
+                try:
+                    output = await sample_tgi(
+                        session, input, generate_args, generate_url=generate_url
+                    )
+                except Exception as e:
+                    print("Sampling failed:", e)
+                    continue
+
+                try:
+                    output_ = re.sub(r"\s+", "", output)
+                    y_ = re.sub(r"\s+", "", y)
+                    pos = output_.index(
+                        y_
+                    )  # compare ignoring whitespaces (e.g. spaces and newlines)
+                except:
+                    pos = -1
+
+                log_lines.append(
+                    {
+                        "id": id,
+                        "trial": j,
+                        "input": input,
+                        "output": output,
+                        "ground_truth": target,
+                        "found": pos,
+                        "solved": (pos > -1),
+                    }
+                )
+
+                if pos >= 0:
+                    print(f"SOLUTION found for {id} at index {pos}.")
+                    print("output:", output)
+                    print("expected:", target)
+                    stats.correct += 1
+                    stats.correct_ids.append(id)
+                    break
+
+            print(
+                f"[{index}] checking {id} (solved: {stats.correct}/{len(riddle_ids)})"
+            )
+            if jsonl_out:
+                dump_jsonl(jsonl_out, log_lines)
+
+        results = await process_queue(
+            job_generator=generate_sampling_jobs(),
+            worker_func=sampling_worker,
+            max_concurrent=max_concurrent,
+        )
+
+    print(f"\nSolved: {stats.correct}/{len(riddle_ids)}")
+    print(f"Skipped: {stats.skipped}")
+    print("IDs of solved riddles: ", stats.correct_ids)
+
+
+async def main():
     args = parse_args()
 
-    model_id = get_models(base_url=args.base_url)[0]["id"]
+    model_id = (await get_models(base_url=args.base_url))[0]["id"]
     print(f"Model ID: {model_id}")
 
     generate_url = args.base_url + "/generate"
     generate_args = {
         "max_new_tokens": args.max_new_tokens,
         "min_new_tokens": args.min_new_tokens,
-        "do_sample": args.temperature > 0
+        "do_sample": args.temperature > 0,
     }
     if args.temperature > 0:
-        generate_args["temperature"] =  args.temperature
+        generate_args["temperature"] = args.temperature
         generate_args["top_p"] = args.top_p
 
     riddle_directories = ["evaluation", "training"]
@@ -205,10 +371,6 @@ def main():
     print(f"Total number of riddles: {len(riddle_ids)}")
 
     num_trials = args.trials
-
-    correct = 0
-    skipped = 0
-    correct_ids = []
 
     alphabet = json.loads(args.alphabet)
     assert isinstance(alphabet, list)
@@ -236,80 +398,20 @@ def main():
     print(x)
     print()
 
-    log_lines = []
-
-    def dump_jsonl(file_name: str | Path, lines: list):
-        file_name = Path(file_name)
-        with file_name.open("w", encoding="UTF-8") as f:
-            for l in lines:
-                json.dump(l, f)
-                f.write("\n")
-
-    for i, id in enumerate(riddle_ids):
-        riddle = dataset.load_riddle_from_id(id)
-
-        x, y = format_riddle_input(
-            riddle,
-            alphabet,
-            col_delimiter=col_delimiter,
-            row_delimiter=row_delimiter,
-            chatml=chatml,
-        )
-        if len(x) > args.cutoff_length:
-            print(f"skipping {id} ...")
-            skipped += 1
-            continue
-
-        print(f"[{i}] checking {id} (solved: {correct}/{len(riddle_ids)})")
-
-        for j in range(num_trials):
-            if num_trials > 1:
-                print(f"Try {j+1} of {num_trials}")
-
-            try:
-                output = sample_tgi(x, generate_args, generate_url=generate_url)
-            except Exception as e:
-                print("Sampling failed:", e)
-                continue
-
-            #print("output:", output)
-            #print("search:", y)
-
-            try:
-                output_ = re.sub(r"\s+", "", output)
-                y_ = re.sub(r"\s+", "", y)
-                index = output_.index(y_) # compare ignoring whitespaces (e.g. spaces and newlines)
-            except:
-                index = -1
-
-            log_lines.append(
-                {
-                    "id": id,
-                    "trial": j,
-                    "input": x,
-                    "output": output,
-                    "ground_truth": y,
-                    "found": index,
-                    "solved": (index > -1),
-                }
-            )
-
-            if index >= 0:
-                print(f"SOLUTION found for {id} at index {index}.")
-                print("output:", output)
-                print("expected:", y)
-                correct += 1
-                correct_ids.append(id)
-                break
-
-        print()
-        if args.jsonl_out:
-            dump_jsonl(args.jsonl_out, log_lines)
-
-    print(f"\nSolved: {correct}/{len(riddle_ids)}")
-    print(f"Skipped: {skipped}")
-    print("IDs of solved riddles: ", correct_ids)
+    await sample_concurrent(
+        riddle_ids=riddle_ids,
+        alphabet=alphabet,
+        col_delimiter=col_delimiter,
+        row_delimiter=row_delimiter,
+        chatml=chatml,
+        generate_url=generate_url,
+        generate_args=generate_args,
+        cutoff_length=args.cutoff_length,
+        jsonl_out=args.jsonl_out,
+        num_trials=num_trials,
+        max_concurrent=32,
+    )
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
