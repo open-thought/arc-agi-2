@@ -294,7 +294,7 @@ async def sample_concurrent(
 
             for j in range(num_trials):
                 if num_trials > 1:
-                    print(f"Try {j+1} of {num_trials}")
+                    print(f"[{id}] Try {j+1} of {num_trials}")
 
                 try:
                     output = await sample_tgi(
@@ -306,9 +306,9 @@ async def sample_concurrent(
 
                 try:
                     output_ = re.sub(r"\s+", "", output)
-                    y_ = re.sub(r"\s+", "", y)
+                    target_ = re.sub(r"\s+", "", target)
                     pos = output_.index(
-                        y_
+                        target_
                     )  # compare ignoring whitespaces (e.g. spaces and newlines)
                 except:
                     pos = -1
@@ -326,15 +326,15 @@ async def sample_concurrent(
                 )
 
                 if pos >= 0:
-                    print(f"SOLUTION found for {id} at index {pos}.")
+                    print(f"[{id}] SOLUTION found at index {pos}.")
                     print("output:", output)
-                    print("expected:", target)
+                    print("ground_truth:", target)
                     stats.correct += 1
                     stats.correct_ids.append(id)
                     break
 
             print(
-                f"[{index}] checking {id} (solved: {stats.correct}/{len(riddle_ids)})"
+                f"[{id}] solved: {stats.correct}/{len(riddle_ids)} (skipped: {stats.skipped})"
             )
             if jsonl_out:
                 dump_jsonl(jsonl_out, log_lines)
