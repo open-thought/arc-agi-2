@@ -1,4 +1,5 @@
 2024-12-12
+git hash: 4f13208ac37fdf0ded0945851604fc695a348cd1
 Model ID: NousResearch/Hermes-3-Llama-3.1-8B
 
 
@@ -48,3 +49,30 @@ python -u tgi_inference.py --format chatml --cutoff_length 8096 --max_new_tokens
 Solved: 28/800
 Skipped: 256
 IDs of solved riddles:  ['1a2e2828', '1bfc4729', '2dee498d', '332efdb3', '3bd67248', '44f52bb0', '4c4377d9', '53b68214', '5614dbcf', '62b74c02', '62c24649', '66e6c45b', '6d0aefbc', '6f8cd79b', '6fa7a44f', '8597cfd7', '963e52fc', 'a416b8f3', 'af24b4cc', 'b0c4d837', 'b1948b0a', 'bda2d7a6', 'd10ecb37', 'd5c634a2', 'dc433765', 'e872b94a', 'e9afcf9a', 'fc754716']
+
+
+## retry with larger cutoff_length
+
+
+python -u tgi_inference.py --format chatml --cutoff_length 48576 --max_new_tokens 2048 --temperature 0 --jsonl_out t0_colors.jsonl --trials 1 --alphabet "[\"black\",\"red\",\"green\",\"blue\",\"yellow\",\"orange\",\"brown\",\"pink\",\"purple\",\"white\"]"
+Solved: 15/800
+Skipped: 5
+IDs of solved riddles:  ['017c7c7b', '1bfc4729', '332efdb3', '445eab21', '53b68214', '62c24649', '6f8cd79b', '7b7f7511', '963e52fc', 'a416b8f3', 'aabf363d', 'bd4472b8', 'bda2d7a6', 'de1cd16c', 'e9afcf9a']
+
+
+python -u tgi_inference.py --format chatml --cutoff_length 48576 --max_new_tokens 2048 --temperature 0 --jsonl_out t0_icao.jsonl --trials 1 --alphabet "[\"Alfa\",\"Bravo\",\"Charlie\",\"Delta\",\"Echo\",\"Foxtrot\",\"Golf\",\"Hotel\",\"India\",\"Juliett\"]"
+Solved: 14/800
+Skipped: 4
+IDs of solved riddles:  ['2dee498d', '332efdb3', '3bd67248', '4be741c5', '66e6c45b', '963e52fc', 'a416b8f3', 'a65b410d', 'b0c4d837', 'b1948b0a', 'b9b7f026', 'bda2d7a6', 'dc433765', 'e21a174a']
+
+
+python -u tgi_inference.py --format chatml --cutoff_length 48576 --max_new_tokens 2048 --temperature 0.3 --jsonl_out t3_colors.jsonl --trials 3 --alphabet "[\"black\",\"red\",\"green\",\"blue\",\"yellow\",\"orange\",\"brown\",\"pink\",\"purple\",\"white\"]"
+Solved: 31/800
+Skipped: 5
+IDs of solved riddles:  ['017c7c7b', '1bfc4729', '25d8a9c8', '27a28665', '29c11459', '2dee498d', '332efdb3', '445eab21', '44f52bb0', '4be741c5', '4c4377d9', '50a16a69', '53b68214', '5582e5ca', '5614dbcf', '62b74c02', '62c24649', '6f8cd79b', '7b7f7511', '8be77c9e', '9110e3c5', '963e52fc', 'a416b8f3', 'aabf363d', 'bd4472b8', 'bda2d7a6', 'ca8de6ea', 'd10ecb37', 'de1cd16c', 'e9afcf9a', 'f76d97a5']
+
+
+python -u tgi_inference.py --format chatml --cutoff_length 48576 --max_new_tokens 2048 --temperature 0.3 --jsonl_out t3_icao.jsonl --trials 3 --alphabet "[\"Alfa\",\"Bravo\",\"Charlie\",\"Delta\",\"Echo\",\"Foxtrot\",\"Golf\",\"Hotel\",\"India\",\"Juliett\"]"
+Solved: 24/800
+Skipped: 4
+IDs of solved riddles:  ['239be575', '25ff71a9', '332efdb3', '3bd67248', '445eab21', '44f52bb0', '4c4377d9', '53b68214', '5582e5ca', '62c24649', '66e6c45b', '68b16354', '6d0aefbc', '6f8cd79b', '7b7f7511', '88a62173', '9110e3c5', '963e52fc', 'a416b8f3', 'b0c4d837', 'bda2d7a6', 'd9fac9be', 'dc433765', 'e9afcf9a']
