@@ -34,6 +34,15 @@
 - augment riddle with basic data of riddle boards (in/out sizes, color-histogram, segmentation)
 - use meta-planning prompts to summarize and criticize a rollout and to make suggestions what should be tried next (potentially combine with RL to learn what an effective strategy for ARC riddles is, e.g. what to ask/try first, which prompts/questions uncover the transformation rules)
 
+### Agent implementation
+- training data: generate riddle board descriptions with the riddle-generator source as oracel information (not shown during training)
+- optimize key prompts of system in outer loop with llm (learn to ask the 'right questions' in higher meta-cognition layer)
+- reflect on failed attempts with llm to generate filtered/summarized context for future request
+- use llm to generate corrected reasoning traces from failed attempts when shown ground-truth example
+- adaptive sampling: start sampling with low temperature and increase temperature gradually for reasoning (requires solid verifier)
+- aim to limit the amount of reasoning-work: for simple 'well-known' riddles a direct transduction should be enough, try quick-shots first and check them before starting more elaborate reasoning (requires solid verifier, i.e. simpler for induction/program synthesis)
+- try to classify based on a generated riddle-analysis if an induction vs. transduction approach should be tried first
+
 
 ## Combine induction & transduction
 
