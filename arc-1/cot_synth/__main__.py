@@ -1,8 +1,14 @@
 import argparse
+import random
 from pathlib import Path
 import json
 import pickle
+from typing import Optional
 from tqdm import tqdm
+from datasets import Dataset, Image, Sequence
+
+from visu import plot_task
+from formatting import format_training_examples, format_board
 
 # Llama 3.2-Vision 11B, 128k context
 # native image tile size of vision adapter: 448 px
@@ -29,20 +35,19 @@ from tqdm import tqdm
 # prepare data and send prompt to sonnet
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-
-    args = parser.parse_args()
-    return args
-
-
-def load_remix_arc_dataset(dataset_path: Path) -> dict[str, dict]:
+def load_remix_arc_dataset(
+    dataset_path: Path, max_count: Optional[int] = None, show_progress: bool = True
+) -> dict[str, dict]:
     riddle_ids = [p.stem for p in dataset_path.glob("*.png")]
+    riddle_ids.sort()
+
+    if max_count is not None:
+        riddle_ids = riddle_ids[:max_count]
 
     riddles = {}
 
     # load riddles & their meta-data
-    for rid in tqdm(riddle_ids):
+    for rid in tqdm(riddle_ids, disable=not show_progress):
         riddle_path = dataset_path / (rid + ".json")
         riddle_meta_path = dataset_path / (rid + ".meta.json")
 
@@ -60,6 +65,124 @@ def load_remix_arc_dataset(dataset_path: Path) -> dict[str, dict]:
     return riddles
 
 
+def generate_transduction_dataset(riddles: dict[str, dict], n: int):
+    color_codes = [
+        "#000",
+        "#0074D9",
+        "#FF4136",
+        "#2ECC40",
+        "#FFDC00",
+        "#AAAAAA",
+        "#F012BE",
+        "#FF851B",
+        "#7FDBFF",
+        "#870C25",
+    ]
+    color_names = [
+        "black",
+        "blue",
+        "red",
+        "green",
+        "yellow",
+        "gray",
+        "magenta",
+        "orange",
+        "sky",
+        "brown",
+    ]
+
+    system_message = "You are a world-class puzzle solver with exceptional pattern recognition skills. Your task is to analyze puzzles, spot patterns, and provide direct solutions."
+    alphabet = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+    col_delimiter: str = ","
+    row_delimiter: str = ",\n"
+
+    riddle_ids = list(riddles.keys())
+    random.shuffle(riddle_ids)
+
+    img_dir = Path("./images/")
+    img_dir.mkdir(exist_ok=True)
+
+    messages: list[list] = []
+    images: list[list] = []
+    
+    for i in range(n):
+        riddle_id = riddle_ids[i % len(riddle_ids)]
+
+        riddle_pairs = riddles[riddle_id]["board_pairs"]
+
+        # pick random riddle, select 4 to 7 random example boards
+        num_examples =  random.randint(4, 7)
+        board_pairs = random.sample(riddle_pairs, k=num_examples)
+
+        image_path = img_dir / f"{i}.png"
+        plot_task(board_pairs, filename=image_path, hide_last_output=True)
+
+        input_examples = format_training_examples(
+            board_pairs[:-1],
+            alphabet=alphabet,
+            col_delimiter=col_delimiter,
+            row_delimiter=row_delimiter,
+        )
+        test_input = format_board(
+            board_pairs[-1]["input"],
+            alphabet=alphabet,
+            col_delimiter=col_delimiter,
+            row_delimiter=row_delimiter,
+        )
+        test_output = format_board(
+            board_pairs[-1]["output"],
+            alphabet=alphabet,
+            col_delimiter=col_delimiter,
+            row_delimiter=row_delimiter,
+            with_board_dim=False,
+        )
+
+        
+        conversation = []
+        # # add system prompt
+        # seems axolotl doesn't like system prompt with images .. got:
+        # jinja2.exceptions.TemplateError: Prompting with images is incompatible with system messages.
+        # conversation.append(
+        #     {"content": [{"text": system_message, "type": "text"}], "role": "system"}
+        # )
+
+        buffer = []
+        buffer.append("The following color mapping is used: ")
+        buffer.append(
+            ", ".join([f"{alphabet[i]}: {name}" for i, name in enumerate(color_names)])
+        )
+        buffer.append("\n\n")
+
+        buffer.append("Input examples:\n")
+        buffer.append(input_examples)
+
+        buffer.append("Test input:\n")
+        buffer.append(test_input)
+
+        question = "".join(buffer)
+
+        conversation.append(
+            {"content": [{"text": question, "type": "text"}, { "index": 0, "type": "image" }], "role": "user"}
+        )
+
+        answer = test_output
+        conversation.append(
+            {"content": [{"text": answer, "type": "text"}, ], "role": "assistant"}
+        )
+
+        messages.append(conversation)
+        images.append([str(image_path)])
+        
+    # generate hf dataset
+    ds = Dataset.from_dict({"messages": messages})
+    ds = ds.add_column("images", images) 
+    ds = ds.cast_column("images", Sequence(Image()))  
+    ds.save_to_disk("~/data/dummy_vlm_train")
+
+    print("done")
+
+
+
 def cache_remix_arc_dataset(dataset_path: Path, cache_path: Path) -> dict[str, dict]:
     remix_arc_pickle_path = cache_path / "remix-arc-1.3k.pickle"
     if remix_arc_pickle_path.exists():
@@ -73,15 +196,24 @@ def cache_remix_arc_dataset(dataset_path: Path, cache_path: Path) -> dict[str, d
     return remix_arc_data
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    args = parser.parse_args()
+    return args
+
+
 def main():
     args = parse_args()
 
     print("importing dataset")
-    remix_arc_dateset_path = Path("/data/remix-arc-1.3k/")
+    remix_arc_dateset_path = Path("~/data/remix-arc-1.3k/").expanduser()
     data_cache_path = Path(".cache")
+    # x = cache_remix_arc_dataset(remix_arc_dateset_path, data_cache_path)
+    x = load_remix_arc_dataset(remix_arc_dateset_path, max_count=10)
 
-    x = cache_remix_arc_dataset(remix_arc_dateset_path, data_cache_path)
-    print(len(x))
+    generate_transduction_dataset(x, n=50)
+
 
 
 if __name__ == "__main__":
