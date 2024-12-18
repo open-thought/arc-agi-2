@@ -25,6 +25,7 @@
 - 2nd place Guillermo Barbadillo: [ironbar/arc24](https://github.com/ironbar/arc24), [05_Solution_Summary](https://ironbar.github.io/arc24/05_Solution_Summary/)
 - Jeremy Berman's Blog post: [How I came in first on ARC-AGI-Pub using Sonnet 3.5 with Evolutionary Test-time Compute](https://jeremyberman.substack.com/p/how-i-got-a-record-536-on-arc-agi)
 - Ryan Greenblatt's post: [Getting 50% (SoTA) on ARC-AGI with GPT-4o](https://redwoodresearch.substack.com/p/getting-50-sota-on-arc-agi-with-gpt), code: [rgreenblatt/arc_draw_more_samples_pub](https://github.com/rgreenblatt/arc_draw_more_samples_pub), [MLST Interview](https://youtu.be/z9j3wB1RRGA)
+- Small 2D nGPT model for ARC-2024 [jfpuget/ARC-AGI-Challenge-2024](https://github.com/jfpuget/ARC-AGI-Challenge-2024), [paper](https://github.com/jfpuget/ARC-AGI-Challenge-2024/blob/main/arc.pdf)
 
 
 ## Repositories
