@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -22,7 +23,7 @@ def generate(
     max_tokens: int = 6 * 1024,
 ) -> ChatCompletion:
 
-    max_retries = 10
+    max_retries = 3
     error_count = 0
     while True:
         try:
@@ -38,7 +39,7 @@ def generate(
         except Exception as e:
             if error_count >= max_retries:
                 raise
-            print("Completion failed: ", e)
+            print(f"Completion failed model={model}, error_count={error_count}: {e}")
             time.sleep(
                 error_count**2
             )  # no wait for first, otherwise quadratic back-off
@@ -145,19 +146,21 @@ def find_token_index(tokens: list[str], sub: str) -> int:
     return i
 
 
-def range_sum_logprobs(
+def range_perplexity_per_token(
     begin_pos: int, end_pos: int, tokens: list[str], logprobs: list[float]
 ) -> float:
     assert len(tokens) == len(logprobs)
     s = 0
+    n = 0
     for i in range(begin_pos, end_pos):
         if tokens[i].isspace():
             continue
         s += logprobs[i]
-    return s
+        n += 1
+    return math.exp(-s / n)
 
 
-def measure_output_probability(
+def measure_output_perplexity(
     client: Together,
     input_examples: str,
     test_input: str,
@@ -205,7 +208,8 @@ You are given the following test input example which should be transformered in 
     begin_pos = find_token_index(prompt_tokens, "<test_output>")
     end_pos = find_token_index(prompt_tokens, "</test_output>")
 
-    return range_sum_logprobs(begin_pos, end_pos, prompt_tokens, prompt_logprobs)
+    skip_begin = 3  # skip open tag tokens
+    return range_perplexity_per_token(begin_pos + skip_begin, end_pos, prompt_tokens, prompt_logprobs)
 
 
 def main():
@@ -214,6 +218,10 @@ def main():
         api_key=os.getenv("OPENROUTER_API_KEY"),
     )
     client = Together()
+
+    # debug:
+    # n = 1
+    # load_max_count = 10
 
     n = 10 * 1000   # 1
     load_max_count = None
@@ -256,7 +264,7 @@ def main():
             with_board_dim=False,
         )
 
-        baseline_prob = measure_output_probability(
+        baseline_ppl = measure_output_perplexity(
             client, input_examples, test_input, test_output
         )
 
@@ -268,28 +276,35 @@ def main():
 
         # ask teacher-model via open-router to generate a CoT description for the given riddle
 
-        # see https://openrouter.ai/models
+        # available openrouter models: https://openrouter.ai/models
 
-        models = ["openai/gpt-4o-2024-08-06", "qwen/qwen-2.5-72b-instruct", "anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
+        #models = ["openai/gpt-4o-2024-08-06", "qwen/qwen-2.5-72b-instruct", "anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
+        models = ["anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
 
-        model = rng.choice(models)
+        while True:    
+            model = rng.choice(models)
 
-        completions = generate_synth_cot(
-            open_router_client,
-            model,
-            1,
-            input_examples,
-            test_input,
-            test_output,
-            generator_fn,
-            verifier_fn,
-            riddle_thoughts,
-            riddle_idea,
-            include_cheat_sheet=True,
-        )
+            try:
+                completions = generate_synth_cot(
+                    open_router_client,
+                    model,
+                    1,
+                    input_examples,
+                    test_input,
+                    test_output,
+                    generator_fn,
+                    verifier_fn,
+                    riddle_thoughts,
+                    riddle_idea,
+                    include_cheat_sheet=True,
+                )
+                break
+            except Exception:
+                print("retrying with different model...")
+                continue
 
         # measure target logprobs with description for target-model
-        cot_prob = measure_output_probability(
+        cot_ppl = measure_output_perplexity(
             client,
             input_examples,
             test_input,
@@ -301,9 +316,9 @@ def main():
             [
                 ("riddle_id", riddle_id),
                 ("model", model),
-                ("advantage", cot_prob - baseline_prob),
-                ("baseline_prob", baseline_prob),
-                ("cot_prob", cot_prob),
+                ("advantage", 1-(cot_ppl/baseline_ppl)),
+                ("baseline_ppl", baseline_ppl),
+                ("cot_ppl", cot_ppl),
                 ("description", completions[0]),
                 ("training_pairs", board_pairs[:-1]),
                 ("test_pairs", board_pairs[-1:]),
@@ -314,7 +329,7 @@ def main():
             f.write(json.dumps(entry) + "\n")
 
         print(
-            f"model={model}, baseline_prob={baseline_prob}, cot_prob={cot_prob}, advantage={cot_prob - baseline_prob}"
+            f"model={model}, baseline_ppl={baseline_ppl:.4f}, cot_ppl={cot_ppl:.4f}, advantage={1-(cot_ppl/baseline_ppl):.1%}"
         )
 
 
