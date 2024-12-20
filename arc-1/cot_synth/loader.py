@@ -37,13 +37,17 @@ def load_remix_arc_dataset(
     return riddles
 
 
-def cache_remix_arc_dataset(dataset_path: Path, cache_path: Path) -> dict[str, dict]:
+def cache_remix_arc_dataset(
+    dataset_path: Path, cache_path: Path, show_progress: bool = True
+) -> dict[str, dict]:
     remix_arc_pickle_path = cache_path / "remix-arc-1.3k.pickle"
     if remix_arc_pickle_path.exists():
         with remix_arc_pickle_path.open("rb") as f:
             remix_arc_data = pickle.load(f)
     else:
-        remix_arc_data = load_remix_arc_dataset(dataset_path)
+        remix_arc_data = load_remix_arc_dataset(
+            dataset_path, max_count=None, show_progress=show_progress
+        )
         cache_path.mkdir(exist_ok=True)
         with remix_arc_pickle_path.open("wb") as f:
             pickle.dump(remix_arc_data, f)

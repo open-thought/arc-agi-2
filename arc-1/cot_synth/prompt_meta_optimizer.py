@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,7 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletion
 from formatting import format_training_examples, format_board
 
-from loader import load_remix_arc_dataset, sample_synthetic_riddles
+from loader import cache_remix_arc_dataset, load_remix_arc_dataset, sample_synthetic_riddles
 
 
 def generate(
@@ -163,9 +164,9 @@ def measure_output_probability(
     test_output: str,
     output_prefix: Optional[str] = None,
 ) -> float:
-    
+
     test_output_content = f"Applying the transformation to the test_input grid we get:\n<test_output>\n{test_output}\n</test_output>"
-    
+
     if output_prefix is not None:
         test_output_content = output_prefix + f"\n\n{test_output_content}"
 
@@ -191,7 +192,7 @@ You are given the following test input example which should be transformered in 
 
     completion = client.chat.completions.create(
         model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-        #model="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+        # model="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
         messages=messages,
         max_tokens=1,
         echo=True,
@@ -214,8 +215,14 @@ def main():
     )
     client = Together()
 
+    n = 10 * 1000   # 1
+    load_max_count = None
+
     remix_arc_dateset_path = Path("~/data/remix-arc-1.3k/").expanduser()
-    riddles = load_remix_arc_dataset(remix_arc_dateset_path, max_count=10)
+    if load_max_count is None:
+        riddles = cache_remix_arc_dataset(remix_arc_dateset_path, cache_path=Path(".cache"))
+    else:
+        riddles = load_remix_arc_dataset(remix_arc_dateset_path, max_count=load_max_count)
 
     alphabet = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
     col_delimiter: str = ","
@@ -225,9 +232,8 @@ def main():
 
     output_file_name_jsonl = Path("output.jsonl")
 
-    n = 1
     for i, (riddle_id, board_pairs) in enumerate(
-        sample_synthetic_riddles(riddles, n=1, rng=rng)
+        sample_synthetic_riddles(riddles, n=n, rng=rng)
     ):
 
         input_examples = format_training_examples(
@@ -250,8 +256,9 @@ def main():
             with_board_dim=False,
         )
 
-        baseline_prob = measure_output_probability(client, input_examples, test_input, test_output)
-        
+        baseline_prob = measure_output_probability(
+            client, input_examples, test_input, test_output
+        )
 
         riddle_data = riddles[riddle_id]
         generator_fn = riddle_data["generator_fn"]
@@ -262,9 +269,10 @@ def main():
         # ask teacher-model via open-router to generate a CoT description for the given riddle
 
         # see https://openrouter.ai/models
-        # model = "openai/gpt-4o-2024-08-06"
-        # model = "qwen/qwen-2.5-72b-instruct"
-        model = "anthropic/claude-3.5-sonnet:beta"
+
+        models = ["openai/gpt-4o-2024-08-06", "qwen/qwen-2.5-72b-instruct", "anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
+
+        model = rng.choice(models)
 
         completions = generate_synth_cot(
             open_router_client,
@@ -282,25 +290,32 @@ def main():
 
         # measure target logprobs with description for target-model
         cot_prob = measure_output_probability(
-            client, input_examples, test_input, test_output, output_prefix=completions[0]
+            client,
+            input_examples,
+            test_input,
+            test_output,
+            output_prefix=completions[0],
         )
 
-        entry = {  
-            "model": model,
-            "advantage": cot_prob - baseline_prob,
-            "baseline_prob": baseline_prob,
-            "cot_prob": cot_prob,
-            "riddle_id": riddle_id,
-            "description": completions[0],
-            "input_examples": input_examples,
-            "test_input": test_input,
-            "test_output": test_output,
-        }
+        entry = OrderedDict(
+            [
+                ("riddle_id", riddle_id),
+                ("model", model),
+                ("advantage", cot_prob - baseline_prob),
+                ("baseline_prob", baseline_prob),
+                ("cot_prob", cot_prob),
+                ("description", completions[0]),
+                ("training_pairs", board_pairs[:-1]),
+                ("test_pairs", board_pairs[-1:]),
+            ]
+        )
 
         with output_file_name_jsonl.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
-        print(f"baseline_prob={baseline_prob}, cot_prob={cot_prob}, advantage={cot_prob - baseline_prob}")
+        print(
+            f"model={model}, baseline_prob={baseline_prob}, cot_prob={cot_prob}, advantage={cot_prob - baseline_prob}"
+        )
 
 
 if __name__ == "__main__":
