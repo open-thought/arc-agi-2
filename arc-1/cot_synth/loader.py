@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 import pickle
-from typing import Optional
+import random
+from typing import Iterator, Optional
 
 from tqdm import tqdm
 
@@ -47,3 +48,25 @@ def cache_remix_arc_dataset(dataset_path: Path, cache_path: Path) -> dict[str, d
         with remix_arc_pickle_path.open("wb") as f:
             pickle.dump(remix_arc_data, f)
     return remix_arc_data
+
+
+def sample_synthetic_riddles(
+    riddles: dict[str, dict],
+    n: int,
+    min_examples: int = 4,
+    max_examples: int = 7,
+    rng: Optional[random.Random] = random,
+) -> Iterator[tuple[str, list[tuple]]]:
+    assert max_examples >= min_examples
+
+    riddle_ids = list(riddles.keys())
+    rng.shuffle(riddle_ids)
+
+    for i in range(n):
+        riddle_id = riddle_ids[i % len(riddle_ids)]
+        riddle_pairs = riddles[riddle_id]["board_pairs"]
+
+        num_examples = rng.randint(4, 7)
+        board_pairs = rng.sample(riddle_pairs, k=num_examples)
+
+        yield riddle_id, board_pairs

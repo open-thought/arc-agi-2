@@ -3,11 +3,11 @@ import random
 from pathlib import Path
 import json
 import pickle
-from typing import Optional
+from typing import Iterator, Optional
 from tqdm import tqdm
 from datasets import Dataset, Image, Sequence
 
-from loader import load_remix_arc_dataset, cache_remix_arc_dataset
+from loader import load_remix_arc_dataset, cache_remix_arc_dataset, sample_synthetic_riddles
 from visu import plot_task
 from formatting import format_training_examples, format_board
 
@@ -68,23 +68,13 @@ def generate_transduction_dataset(riddles: dict[str, dict], n: int):
     col_delimiter: str = ","
     row_delimiter: str = ",\n"
 
-    riddle_ids = list(riddles.keys())
-    random.shuffle(riddle_ids)
-
     img_dir = Path("./images/")
     img_dir.mkdir(exist_ok=True)
 
     messages: list[list] = []
     images: list[list] = []
     
-    for i in range(n):
-        riddle_id = riddle_ids[i % len(riddle_ids)]
-
-        riddle_pairs = riddles[riddle_id]["board_pairs"]
-
-        # pick random riddle, select 4 to 7 random example boards
-        num_examples =  random.randint(4, 7)
-        board_pairs = random.sample(riddle_pairs, k=num_examples)
+    for i, (riddle_id, board_pairs) in enumerate(sample_synthetic_riddles(riddles, n)):
 
         image_path = img_dir / f"{i}.png"
         plot_task(board_pairs, filename=image_path, hide_last_output=True)
