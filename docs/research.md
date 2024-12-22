@@ -30,6 +30,7 @@
 
 ## Repositories
 
+- ARC-AGI model baseline test: [arcprizeorg/model_baseline](https://github.com/arcprizeorg/model_baseline), o3 prompt: [prompt_example_o3.md](https://github.com/arcprizeorg/model_baseline/blob/main/prompt_example_o3.md)
 - RE-ARC: [michaelhodel/re-arc](https://github.com/michaelhodel/re-arc) by [Michael Hodel](https://x.com/bayesilicon)
 - arckit: [mxbi/arckit](https://github.com/mxbi/arckit)
 - ARC dataset collection: [ARC-Interactive](https://neoneye.github.io/arc/), [neoneye/arc-dataset-collection](https://github.com/neoneye/arc-dataset-collection) ([sources](https://github.com/neoneye/arc-notes/tree/main/datasets)) by [Simon Strandgaard](https://x.com/SimonStran36407)
@@ -39,6 +40,7 @@
 
 ## Interesting Links
 
+- 21 Dec 2024: [o3 and ARC-AGI: The unsolved tasks](https://anokas.substack.com/p/o3-and-arc-agi-the-unsolved-tasks)
 - Browser game: [The ARC Game](https://volotat.github.io/ARC-Game/) by [Alexey Borsky](https://x.com/volotat) (repo: [volotat/ARC-Game](https://github.com/volotat/ARC-Game))
 
 

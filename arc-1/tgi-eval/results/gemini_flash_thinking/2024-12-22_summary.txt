@@ -1,0 +1,4 @@
+python openrouter_inference.py --temperature 0.5 --jsonl_out gemeni_flash_thinking_t5_digits.jsonl --trials 3 --max_concurrent 3
+
+Sampling failed: 'NoneType' object is not subscriptable
+[dc2e9a9d] solved: 106/800 (skipped: 0)

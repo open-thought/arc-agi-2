@@ -18,9 +18,17 @@ async def llm_generate(
     sampling_params: dict[str, Any],
 ) -> Awaitable[str]:
     response = await client.chat.completions.create(
-        extra_headers={"X-Title": "open-thought"}, messages=messages, **sampling_params
+        extra_headers={"X-Title": "open-thought"},
+        messages=messages,
+        **sampling_params,
     )
-    return response.choices[0].message.content
+
+    try:
+        return response.choices[0].message.content
+    except Exception as e:
+        print("failure response:", response)
+        time.sleep(5)
+        raise
 
 
 def format_board(
@@ -28,24 +36,38 @@ def format_board(
     alphabet: list[str],
     col_delimiter: str = ",",
     row_delimiter: str = ",\n",
-    with_board_dim: bool = True,
+    array_brackets: bool = True,
+    with_board_shape: bool = False,
 ) -> str:
     h, w = len(board), len(board[0])
     buffer = []
-    if with_board_dim:
-        buffer.append(f"{h}x{w}\n")
-    buffer.append(f"[")
-    for row in range(h):
-        if row > 0 and row_delimiter:
-            buffer.append(row_delimiter)
-        buffer.append("[")
-        for col in range(w):
-            if col > 0 and col_delimiter:
-                buffer.append(col_delimiter)
-            value = board[row][col]
-            buffer.append(alphabet[value])
+
+    if with_board_shape:
+        buffer.append(f"Shape: {h}x{w}\n")
+
+    if array_brackets:
+        buffer.append(f"[")
+        for row in range(h):
+            if row > 0 and row_delimiter:
+                buffer.append(row_delimiter)
+            buffer.append("[")
+            for col in range(w):
+                if col > 0 and col_delimiter:
+                    buffer.append(col_delimiter)
+                value = board[row][col]
+                buffer.append(alphabet[value])
+            buffer.append("]")
         buffer.append("]")
-    buffer.append("]")
+    else:
+        for row in range(h):
+            if row > 0 and row_delimiter:
+                buffer.append(row_delimiter)
+            for col in range(w):
+                if col > 0 and col_delimiter:
+                    buffer.append(col_delimiter)
+                value = board[row][col]
+                buffer.append(alphabet[value])
+
     return "".join(buffer)
 
 
@@ -55,20 +77,23 @@ def format_board_pair(
     alphabet: list[str],
     col_delimiter: str = ",",
     row_delimiter: str = ",\n",
+    array_brackets: bool = True,
 ) -> str:
     input = format_board(
         pair["input"],
         alphabet=alphabet,
         col_delimiter=col_delimiter,
         row_delimiter=row_delimiter,
+        array_brackets=array_brackets,
     )
     output = format_board(
         pair["output"],
         alphabet=alphabet,
         col_delimiter=col_delimiter,
         row_delimiter=row_delimiter,
+        array_brackets=array_brackets,
     )
-    return f"input{index}: {input}\n\noutput{index}: {output}\n\n"
+    return f"Example {index}:\n\nInput:\n{input}\nOutput:\n{output}\n\n"
 
 
 def format_training_examples(
@@ -76,6 +101,7 @@ def format_training_examples(
     alphabet: list[str],
     col_delimiter: str = ",",
     row_delimiter: str = ",\n",
+    array_brackets: bool = True,
 ) -> str:
     buffer = []
     for i, board_pair in enumerate(riddle["train"]):
@@ -85,6 +111,7 @@ def format_training_examples(
             alphabet=alphabet,
             col_delimiter=col_delimiter,
             row_delimiter=row_delimiter,
+            array_brackets=array_brackets,
         )
         buffer.append(s)
 
@@ -96,45 +123,48 @@ def format_riddle_input(
     alphabet: list[str],
     col_delimiter: str = ",",
     row_delimiter: str = ",\n",
+    array_brackets: bool = True,
 ) -> tuple[list[ChatCompletionMessageParam], str]:
     input_examples = format_training_examples(
         riddle,
         alphabet=alphabet,
         col_delimiter=col_delimiter,
         row_delimiter=row_delimiter,
+        array_brackets=array_brackets,
     )
     test_input = format_board(
         riddle["test"][0]["input"],
         alphabet=alphabet,
         col_delimiter=col_delimiter,
         row_delimiter=row_delimiter,
+        array_brackets=array_brackets,
     )
     test_output = format_board(
         riddle["test"][0]["output"],
         alphabet=alphabet,
         col_delimiter=col_delimiter,
         row_delimiter=row_delimiter,
-        with_board_dim=False,
+        array_brackets=array_brackets,
+        with_board_shape=False,
     )
 
     test_index = len(riddle["train"]) + 1
 
-    # earlier version of prompt:
-    # buffer = [
-    #     "<|im_start|>user\n"
-    #     "You like to solve puzzles. Find the underlying abstract input and output transformation. Look at the following input-output pairs:\n",
-    #     input_examples,
-    #     f"Now consider the last input examples and deduce its output. Think deeply! Directly generate output board values.\ninput{test_index}: ",
-    #     test_input,
-    #     f"<|im_end|>\n<|im_start|>assistant\noutput{test_index}: ",
-    # ]
-
+    # o3 prompt
     buffer = [
-        "As an experienced mathematician you are presented with a set of 2D input/output board pairs. Find the input-to-output transformation rule:\n",
+        "Find the common rule that maps an input grid to an output grid, given the examples below.\n\n",
         input_examples,
-        f"Now you consider the last input example. You must deduce the corresponding output for it.\ninput{test_index}: ",
-        test_input,
+        "Below is a test input grid. Predict the corresponding output grid by applying the rule you found. Your final answer should just be the text output grid itself.\n\nInput:\n",
+        test_input
     ]
+
+    # buffer = [
+    #     "As an experienced mathematician you are presented with a set of 2D input/output board pair examples. Find the underlying input-to-output transformation rule:\n",
+    #     input_examples,
+    #     f"Now consider the last input example. You must deduce the corresponding output for it.\ninput{test_index}: ",
+    #     test_input,
+    #     "\nProvide your final answer in the same format.",
+    # ]
 
     user_request = "".join(buffer)
     messages = [
@@ -162,6 +192,7 @@ def parse_args():
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--col_delimiter", type=str, default=",")
     parser.add_argument("--row_delimiter", type=str, default=",\n")
+    parser.add_argument('--no_array_brackets', action='store_false', dest='array_brackets')
     parser.add_argument("--cutoff_length", type=int, default=8096)
     parser.add_argument("--jsonl_out", type=str)
     parser.add_argument("--max_concurrent", type=int, default=1)
@@ -230,9 +261,10 @@ async def process_queue(
 
 class Stats:
     def __init__(self):
-        self.correct = 0
+        self.tried = 0
+        self.solved = 0
         self.skipped = 0
-        self.correct_ids = []
+        self.solved_ids = []
 
 
 async def sample_concurrent(
@@ -241,12 +273,14 @@ async def sample_concurrent(
     alphabet: list[str],
     col_delimiter: str,
     row_delimiter: str,
+    array_brackets: bool,
     open_router_client: AsyncOpenAI,
     generate_args: dict,
     cutoff_length: int,
     jsonl_out: Optional[str],
     num_trials: int = 1,
     max_concurrent: int = 2,
+    no_retry_on_solution: bool = False,
 ):
     stats = Stats()
     log_lines = []
@@ -261,6 +295,7 @@ async def sample_concurrent(
                 alphabet,
                 col_delimiter=col_delimiter,
                 row_delimiter=row_delimiter,
+                array_brackets=array_brackets,
             )
             yield ({"index": i, "id": id, "input": x, "target": y})
 
@@ -270,9 +305,11 @@ async def sample_concurrent(
             stats.skipped += 1
             return
 
+        stats.tried += 1
+        solved = False
         for j in range(num_trials):
             if num_trials > 1:
-                print(f"[{id}] Try {j+1} of {num_trials}")
+                print(f"[{index}:{id}] Try {j+1} of {num_trials}")
 
             try:
                 output = await llm_generate(
@@ -307,15 +344,18 @@ async def sample_concurrent(
             )
 
             if pos >= 0:
-                print(f"[{id}] SOLUTION found at index {pos}.")
+                print(f"[{index}:{id}:{j}] SOLUTION found at index {pos}.")
                 print("output:", output)
                 print("ground_truth:", target)
-                stats.correct += 1
-                stats.correct_ids.append(id)
-                break
+                solved = True
+                if no_retry_on_solution:
+                    break
 
+            if solved:
+                stats.solved += 1
+                stats.solved_ids.append(id)
         print(
-            f"[{id}] solved: {stats.correct}/{len(riddle_ids)} (skipped: {stats.skipped})"
+            f"[{id}] solved: {stats.solved}/{stats.tried} (skipped: {stats.skipped}, total: {len(riddle_ids)})"
         )
         if jsonl_out:
             dump_jsonl(jsonl_out, log_lines)
@@ -326,9 +366,9 @@ async def sample_concurrent(
         max_concurrent=max_concurrent,
     )
 
-    print(f"\nSolved: {stats.correct}/{len(riddle_ids)}")
+    print(f"\nSolved: {stats.solved}/{len(riddle_ids)}")
     print(f"Skipped: {stats.skipped}")
-    print("IDs of solved riddles: ", stats.correct_ids)
+    print("IDs of solved riddles: ", stats.solved_ids)
 
 
 async def main():
@@ -349,6 +389,17 @@ async def main():
         generate_args["temperature"] = args.temperature
         generate_args["top_p"] = args.top_p
 
+    # https://openrouter.ai/docs/provider-routing#custom-routing
+    # generate_args["extra_body"] = {
+    #     "provider": {
+    #         "quantizations": ["bf16"],
+    #         "order": [
+    #             "Hyperbolic",
+    #         ],
+    #         "allow_fallbacks": False,
+    #     },
+    # }
+
     dataset = {}
     train_set, eval_set = arckit.load_data()
     for x in train_set:
@@ -367,10 +418,12 @@ async def main():
 
     col_delimiter = args.col_delimiter
     row_delimiter = args.row_delimiter
+    array_brackets = args.array_brackets
 
     print("alphabet: ", alphabet)
     print("col_delimiter: ", col_delimiter)
     print("row_delimiter: ", row_delimiter)
+    print("array_brackets: ", array_brackets)
     print("num_trails:", num_trials)
 
     print(f"input example {riddle_ids[0]}: ")
@@ -380,6 +433,7 @@ async def main():
         alphabet,
         col_delimiter=col_delimiter,
         row_delimiter=row_delimiter,
+        array_brackets=array_brackets,
     )
     print(x)
     print()
@@ -389,6 +443,7 @@ async def main():
         alphabet=alphabet,
         col_delimiter=col_delimiter,
         row_delimiter=row_delimiter,
+        array_brackets=array_brackets,
         open_router_client=open_router_client,
         generate_args=generate_args,
         cutoff_length=args.cutoff_length,

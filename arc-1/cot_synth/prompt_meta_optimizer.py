@@ -11,7 +11,11 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletion
 from formatting import format_training_examples, format_board
 
-from loader import cache_remix_arc_dataset, load_remix_arc_dataset, sample_synthetic_riddles
+from loader import (
+    cache_remix_arc_dataset,
+    load_remix_arc_dataset,
+    sample_synthetic_riddles,
+)
 
 
 def generate(
@@ -209,7 +213,9 @@ You are given the following test input example which should be transformered in 
     end_pos = find_token_index(prompt_tokens, "</test_output>")
 
     skip_begin = 3  # skip open tag tokens
-    return range_perplexity_per_token(begin_pos + skip_begin, end_pos, prompt_tokens, prompt_logprobs)
+    return range_perplexity_per_token(
+        begin_pos + skip_begin, end_pos, prompt_tokens, prompt_logprobs
+    )
 
 
 def main():
@@ -222,23 +228,37 @@ def main():
     # debug:
     # n = 1
     # load_max_count = 10
+    # seed = 42
 
-    n = 20 * 1000   # 1
+    n = 20 * 1000  # 1
     load_max_count = None
+    seed = 101
+    board_style = "simple"
 
     remix_arc_dateset_path = Path("~/data/remix-arc-1.3k/").expanduser()
     if load_max_count is None:
-        riddles = cache_remix_arc_dataset(remix_arc_dateset_path, cache_path=Path(".cache"))
+        riddles = cache_remix_arc_dataset(
+            remix_arc_dateset_path, cache_path=Path(".cache")
+        )
     else:
-        riddles = load_remix_arc_dataset(remix_arc_dateset_path, max_count=load_max_count)
+        riddles = load_remix_arc_dataset(
+            remix_arc_dateset_path, max_count=load_max_count
+        )
 
     alphabet = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
-    col_delimiter: str = ","
-    row_delimiter: str = ",\n"
+    if board_style == "json":
+        col_delimiter: str = ","
+        row_delimiter: str = ",\n"
+        array_brackets = True
+    elif board_style == "simple":
+        col_delimiter: str = " "
+        row_delimiter: str = "\n"
+        array_brackets = False
+    else:
+        raise RuntimeError(f"Unsupported board_style option '{board_style}'")
 
-    rng = random.Random(42)
-
-    output_file_name_jsonl = Path("output.jsonl")
+    rng = random.Random(seed)
+    output_file_name_jsonl = Path("output_simle.jsonl")
 
     for i, (riddle_id, board_pairs) in enumerate(
         sample_synthetic_riddles(riddles, n=n, rng=rng)
@@ -249,18 +269,21 @@ def main():
             alphabet=alphabet,
             col_delimiter=col_delimiter,
             row_delimiter=row_delimiter,
+            array_brackets=array_brackets,
         )
         test_input = format_board(
             board_pairs[-1]["input"],
             alphabet=alphabet,
             col_delimiter=col_delimiter,
             row_delimiter=row_delimiter,
+            array_brackets=array_brackets,
         )
         test_output = format_board(
             board_pairs[-1]["output"],
             alphabet=alphabet,
             col_delimiter=col_delimiter,
             row_delimiter=row_delimiter,
+            array_brackets=array_brackets,
             with_board_dim=False,
         )
 
@@ -278,10 +301,16 @@ def main():
 
         # available openrouter models: https://openrouter.ai/models
 
-        models = ["openai/gpt-4o-2024-08-06", "qwen/qwen-2.5-72b-instruct", "anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
-        #models = ["anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
+        models = [
+            "openai/gpt-4o-2024-08-06",
+            "qwen/qwen-2.5-72b-instruct",
+            "anthropic/claude-3.5-sonnet:beta",
+            "google/gemini-flash-1.5",
+            "meta-llama/llama-3.3-70b-instruct",
+        ]
+        # models = ["anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
 
-        while True:    
+        while True:
             model = rng.choice(models)
 
             try:
@@ -316,7 +345,7 @@ def main():
             [
                 ("riddle_id", riddle_id),
                 ("model", model),
-                ("advantage", 1-(cot_ppl/baseline_ppl)),
+                ("advantage", 1 - (cot_ppl / baseline_ppl)),
                 ("baseline_ppl", baseline_ppl),
                 ("cot_ppl", cot_ppl),
                 ("description", completions[0]),

@@ -21,7 +21,7 @@
     - [ ] text-only input
     - [ ] image+text input
 - [ ] train llama 3.2 vision 11B for ARC transduction task
-    - [ ] test & decide Unsloth vs. Axolotl
+    - [x] test Axolotl
     - [ ] determine compute requirements
     - [ ] run first FT
 - [ ] generate reward verifier dataset
