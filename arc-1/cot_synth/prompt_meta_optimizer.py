@@ -153,7 +153,7 @@ def range_perplexity_per_token(
     s = 0
     n = 0
     for i in range(begin_pos, end_pos):
-        if tokens[i].isspace():
+        if tokens[i].isspace() or tokens[i] in (",", "[", "]"):
             continue
         s += logprobs[i]
         n += 1
@@ -223,7 +223,7 @@ def main():
     # n = 1
     # load_max_count = 10
 
-    n = 10 * 1000   # 1
+    n = 20 * 1000   # 1
     load_max_count = None
 
     remix_arc_dateset_path = Path("~/data/remix-arc-1.3k/").expanduser()
@@ -278,8 +278,8 @@ def main():
 
         # available openrouter models: https://openrouter.ai/models
 
-        #models = ["openai/gpt-4o-2024-08-06", "qwen/qwen-2.5-72b-instruct", "anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
-        models = ["anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
+        models = ["openai/gpt-4o-2024-08-06", "qwen/qwen-2.5-72b-instruct", "anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
+        #models = ["anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
 
         while True:    
             model = rng.choice(models)
