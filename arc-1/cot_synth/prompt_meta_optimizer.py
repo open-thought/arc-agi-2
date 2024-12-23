@@ -91,8 +91,8 @@ The puzzle consists of two parts:
 </test_input>
 
 Do the following:
-1. Analyze the training examples and generate a chain of thought in `<analysis>` tags where you describe all relevant aspects of the the input & output examples (e.g. which objects they contain, what changes you notice between input & output, which logic rules apply if any etc.). Infer the underlying transformation rule.
-2. Generate a description of the transformation step-by-step in meticulous detail in `<transformation>` tags. The description should be like pseudo-code, detailled enough for someone to apply the transformation to a given input example without additional information or training examples. Explain how relevant parameters for the transformation can be inferred from the input example. Describe precisely reference points or objects, spatial transformations of shapes.
+1. Analyze the training examples and generate a chain of thought in <analysis> tags where you describe all relevant aspects of the the input & output examples (e.g. which objects they contain, what changes you notice between input & output, which logic rules apply if any etc.). Infer the underlying transformation rule.
+2. Generate a description of the transformation step-by-step in meticulous detail in <transformation> tags. The description should be like pseudo-code, detailled enough for someone to apply the transformation to a given input example without additional information or training examples. Explain how relevant parameters for the transformation can be inferred from the input example. Describe precisely reference points or objects, spatial transformations of shapes.
 """
 
     if include_cheat_sheet:
@@ -232,8 +232,9 @@ def main():
 
     n = 20 * 1000  # 1
     load_max_count = None
-    seed = 101
+    seed = 202
     board_style = "simple"
+    output_file_name_jsonl = Path("output_simple.jsonl")
 
     remix_arc_dateset_path = Path("~/data/remix-arc-1.3k/").expanduser()
     if load_max_count is None:
@@ -258,7 +259,6 @@ def main():
         raise RuntimeError(f"Unsupported board_style option '{board_style}'")
 
     rng = random.Random(seed)
-    output_file_name_jsonl = Path("output_simle.jsonl")
 
     for i, (riddle_id, board_pairs) in enumerate(
         sample_synthetic_riddles(riddles, n=n, rng=rng)
@@ -308,7 +308,6 @@ def main():
             "google/gemini-flash-1.5",
             "meta-llama/llama-3.3-70b-instruct",
         ]
-        # models = ["anthropic/claude-3.5-sonnet:beta", "google/gemini-flash-1.5", "meta-llama/llama-3.3-70b-instruct"]
 
         while True:
             model = rng.choice(models)
