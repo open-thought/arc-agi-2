@@ -154,7 +154,7 @@ def format_riddle_input(
     buffer = [
         "Find the common rule that maps an input grid to an output grid, given the examples below.\n\n",
         input_examples,
-        "Below is a test input grid. Predict the corresponding output grid by applying the rule you found. Your final answer must be placed in <output></output> tags and should be just be the text output grid itself.\n\nInput:\n",
+        "Below is a test input grid. Predict the corresponding output grid by applying the rule you found. Describe how you derived the rule and your overall reasoning process in detail before you submit your answer. Your final answer must be placed in <output></output> tags and should be just be the text output grid itself.\n\nInput:\n",
         test_input,
     ]
 
@@ -192,7 +192,9 @@ def parse_args():
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--col_delimiter", type=str, default=",")
     parser.add_argument("--row_delimiter", type=str, default=",\n")
-    parser.add_argument('--no_array_brackets', action='store_false', dest='array_brackets')
+    parser.add_argument(
+        "--no_array_brackets", action="store_false", dest="array_brackets"
+    )
     parser.add_argument("--cutoff_length", type=int, default=8096)
     parser.add_argument("--jsonl_out", type=str)
     parser.add_argument("--max_concurrent", type=int, default=1)
@@ -202,9 +204,9 @@ def parse_args():
     return args
 
 
-def dump_jsonl(file_name: str | Path, lines: list):
-    file_name = Path(file_name)
-    with file_name.open("w", encoding="UTF-8") as f:
+def write_jsonl(file_name: str | Path, lines: list, mode: str = "w") -> None:
+    file_path = Path(file_name)
+    with file_path.open(mode, encoding="utf-8") as f:
         for l in lines:
             json.dump(l, f)
             f.write("\n")
@@ -284,7 +286,6 @@ async def sample_concurrent(
     no_retry_on_solution: bool = False,
 ):
     stats = Stats()
-    log_lines = []
 
     riddle_ids = sorted(dataset.keys())
 
@@ -308,6 +309,7 @@ async def sample_concurrent(
 
         stats.tried += 1
         solved = False
+        log_lines = []
         for j in range(num_trials):
             if num_trials > 1:
                 print(f"[{index}:{id}] Try {j+1} of {num_trials}")
@@ -323,32 +325,36 @@ async def sample_concurrent(
                 time.sleep(1.0)
                 continue
 
+            output_match = False
+            output_tag_found = False
             try:
                 output_ = re.search(
-                    r"<output>\n?((.*\n)+)</output>", output, flags=re.MULTILINE
+                    r"<output>(.*?)</output>", output, flags=re.DOTALL
                 ).group(1)
-                output_ = re.sub(r"[^\S\n]", "", output_)
-                target_ = re.sub(r"[^\S\n]", "", target)
-                pos = output_.index(
-                    target_
-                )  # compare ignoring horizontal whitespaces but with newlines
+                output_tag_found = True
+                # compare ignoring horizontal whitespaces but with newlines
+                output_ = re.sub(r"[^\S\n]", "", output_).strip()
+                target_ = re.sub(r"[^\S\n]", "", target).strip()
+
+                if output_ == target_:
+                    output_match = True
             except:
-                pos = -1
+                pass
 
             log_lines.append(
                 {
                     "id": id,
                     "trial": j,
+                    "solved": output_match,
+                    "output_tag_found": output_tag_found,
                     "input": input,
                     "output": output,
                     "ground_truth": target,
-                    "found": pos,
-                    "solved": (pos > -1),
                 }
             )
 
-            if pos >= 0:
-                print(f"[{index}:{id}:{j}] SOLUTION found at index {pos}.")
+            if output_match:
+                print(f"[{index}:{id}:{j}] SOLUTION found.")
                 print("output:", output)
                 print("ground_truth:", target)
                 solved = True
@@ -362,7 +368,7 @@ async def sample_concurrent(
             f"[{id}] solved: {stats.solved}/{stats.tried} (skipped: {stats.skipped}, total: {len(riddle_ids)})"
         )
         if jsonl_out:
-            dump_jsonl(jsonl_out, log_lines)
+            write_jsonl(jsonl_out, log_lines, "a")
 
     results = await process_queue(
         job_generator=generate_sampling_jobs(),
