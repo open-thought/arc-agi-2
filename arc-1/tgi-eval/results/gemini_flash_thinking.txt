@@ -1,0 +1,11 @@
+# python openrouter_inference.py --temperature 0.5 --jsonl_out gemeni_flash_thinking_t5_digits.jsonl --trials 3 --max_concurrent 3
+
+Sampling failed: 'NoneType' object is not subscriptable
+[dc2e9a9d] solved: 106/800 (skipped: 0)
+
+
+# python openrouter_inference.py --model google/gemini-2.0-flash-thinking-exp:free --temperature 0.5 --jsonl_out gemini_flash_thinking_t5_simple.jsonl --trials 3 --max_concurrent 4 --no_array_brackets --col_delimiter " " --row_delimiter $'\n'
+
+Solved: 60/800
+Skipped: 0
+IDs of solved riddles:  ['00576224', '1a2e2828', '1cf80156', '22eb0ac0', '253bf280', '27a28665', '28bf18c6', '29c11459', '2dee498d', '332efdb3', '3618c87e', '3ac3eb23', '3bd67248', '3c9b0459', '44f52bb0', '496994bd', '5614dbcf', '60c09cac', '67385a82', '67e8384a', '68b67ca3', '695367ec', '6d0aefbc', '6f8cd79b', '6fa7a44f', '8597cfd7', '90c28cc7', '9172f3a0', '963e52fc', '9a4bb226', '99b1bc43', '995c5fa3', '99fa7670', '9c56f360', 'a2fd1cf0', 'a65b410d', 'a79310a0', 'a85d4709', 'aabf363d', 'ac0a08a4', 'b1948b0a', 'b6afb2da', 'bbb1b8b6', 'bd4472b8', 'c59eb873', 'c7d4e6ad', 'c8f0f002', 'ca8de6ea', 'ca8f78db', 'ce22a75a', 'ce4f8723', 'd0f5fe59', 'd23f8c26', 'd631b094', 'd89b689b', 'e57337a4', 'e9afcf9a', 'ed36ccf7', 'f25ffba3', 'fafffa47']

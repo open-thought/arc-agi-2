@@ -199,6 +199,7 @@ def parse_args():
     parser.add_argument("--jsonl_out", type=str)
     parser.add_argument("--max_concurrent", type=int, default=1)
     parser.add_argument("--provider", type=str, default=None)
+    parser.add_argument("--timeout", type=float, default=90.0)
 
     args = parser.parse_args()
     return args
@@ -390,6 +391,7 @@ async def main():
     open_router_client = AsyncOpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.getenv("OPENROUTER_API_KEY"),
+        timeout=args.timeout,
     )
     generate_args = {
         "model": model_id,

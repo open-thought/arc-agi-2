@@ -1,0 +1,4 @@
+# python openrouter_inference.py --temperature 0 --jsonl_out QwQ_t0_digits.jsonl --trials 1 --max_concurrent 16 --model qwen/qwq-32b-preview
+
+New run with correct output check in <output> tags:
+# python openrouter_inference.py --provider Hyperbolic --temperature 0.5 --jsonl_out QwQ_t5_digits_simple_3.jsonl --trials 3 --max_concurrent 4 --model qwen/qwq-32b-preview --no_array_brackets --col_delimiter " " --row_delimiter $'\n' --max_new_tokens 16768

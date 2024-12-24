@@ -1,0 +1,1 @@
+# python openrouter_inference.py --provider Lambda --model meta-llama/llama-3.1-8b-instruct --temperature 0.5 --jsonl_out llama_3.1_8B_t5_simple_128.jsonl --trials 128 --max_concurrent 4 --no_array_brackets --col_delimiter " " --row_delimiter $'\n'
