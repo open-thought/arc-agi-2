@@ -154,8 +154,8 @@ def format_riddle_input(
     buffer = [
         "Find the common rule that maps an input grid to an output grid, given the examples below.\n\n",
         input_examples,
-        "Below is a test input grid. Predict the corresponding output grid by applying the rule you found. Your final answer should just be the text output grid itself.\n\nInput:\n",
-        test_input
+        "Below is a test input grid. Predict the corresponding output grid by applying the rule you found. Your final answer must be placed in <output></output> tags and should be just be the text output grid itself.\n\nInput:\n",
+        test_input,
     ]
 
     # buffer = [
@@ -196,6 +196,7 @@ def parse_args():
     parser.add_argument("--cutoff_length", type=int, default=8096)
     parser.add_argument("--jsonl_out", type=str)
     parser.add_argument("--max_concurrent", type=int, default=1)
+    parser.add_argument("--provider", type=str, default=None)
 
     args = parser.parse_args()
     return args
@@ -323,11 +324,14 @@ async def sample_concurrent(
                 continue
 
             try:
-                output_ = re.sub(r"\s+", "", output)
-                target_ = re.sub(r"\s+", "", target)
+                output_ = re.search(
+                    r"<output>\n?((.*\n)+)</output>", output, flags=re.MULTILINE
+                ).group(1)
+                output_ = re.sub(r"[^\S\n]", "", output_)
+                target_ = re.sub(r"[^\S\n]", "", target)
                 pos = output_.index(
                     target_
-                )  # compare ignoring whitespaces (e.g. spaces and newlines)
+                )  # compare ignoring horizontal whitespaces but with newlines
             except:
                 pos = -1
 
@@ -351,9 +355,9 @@ async def sample_concurrent(
                 if no_retry_on_solution:
                     break
 
-            if solved:
-                stats.solved += 1
-                stats.solved_ids.append(id)
+        if solved:
+            stats.solved += 1
+            stats.solved_ids.append(id)
         print(
             f"[{id}] solved: {stats.solved}/{stats.tried} (skipped: {stats.skipped}, total: {len(riddle_ids)})"
         )
@@ -390,15 +394,13 @@ async def main():
         generate_args["top_p"] = args.top_p
 
     # https://openrouter.ai/docs/provider-routing#custom-routing
-    # generate_args["extra_body"] = {
-    #     "provider": {
-    #         "quantizations": ["bf16"],
-    #         "order": [
-    #             "Hyperbolic",
-    #         ],
-    #         "allow_fallbacks": False,
-    #     },
-    # }
+    if args.provider is not None:
+        generate_args["extra_body"] = {
+            "provider": {
+                "order": args.provider.split(","),
+                "allow_fallbacks": False,
+            },
+        }
 
     dataset = {}
     train_set, eval_set = arckit.load_data()
