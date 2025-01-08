@@ -1,8 +1,8 @@
 
 # Axolotl
 
-[Docs](https://axolotl-ai-cloud.github.io/axolotl/)
-
+- [Documentation](https://axolotl-ai-cloud.github.io/axolotl/)
+  - [List of Axolotl config options](https://axolotl-ai-cloud.github.io/axolotl/docs/config.html)
 
 ### Install Axolotl
 
