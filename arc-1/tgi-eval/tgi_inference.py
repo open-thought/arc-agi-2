@@ -197,13 +197,13 @@ def dump_jsonl(file_name: str | Path, lines: list):
 
 
 async def process_queue(
-    job_generator: AsyncIterator[Any], worker_func: Callable, max_concurrent: int = 3
+    job_generator: Iterator[Any], worker_func: Callable, max_concurrent: int = 3
 ) -> list:
     """
-    Process a large number of jobs with limited concurrency.
+    Process jobs with limited concurrency.
 
     Args:
-        job_generator: Async iterator yielding jobs to process
+        job_generator: Iterator yielding jobs to process
         worker_func: Async function to process each job
         max_concurrent: Maximum number of concurrent jobs
     """

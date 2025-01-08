@@ -4,7 +4,7 @@ from pathlib import Path
 import random
 import re
 import time
-from typing import Any, Awaitable, Iterator
+from typing import Any, Awaitable, Iterator, Optional
 import aiohttp
 import asyncio
 import json
@@ -38,7 +38,15 @@ def parse_args():
     parser.add_argument(
         "--model-id", type=str, default="meta-llama/Llama-3.2-3B-Instruct"
     )
-    parser.add_argument("--max-concurrent", type=int, default=1)
+    parser.add_argument("--max-concurrent", type=int, default=32)
+    parser.add_argument(
+        "--input-path",
+        type=str,
+        default="~/data/tgi-eval/llama_3.1_8B_t5_simple_64.jsonl",
+    )
+    parser.add_argument(
+        "--output-path", type=str, default="llama_3.1_8B_t5_simple_64_scores.jsonl"
+    )
     args = parser.parse_args()
     return args
 
@@ -101,9 +109,8 @@ async def main():
 
         tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-        input_path = Path(
-            "~/data/tgi-eval/llama_3.1_8B_t5_simple_64.jsonl"
-        ).expanduser()
+        input_path = Path(args.input_path).expanduser()
+        output_path = Path(args.output_path).expanduser()
 
         parameters = {
             "details": True,
@@ -121,8 +128,11 @@ async def main():
             ground_truth: str,
             solved: bool,
             output_tag_found: bool,
-        ) -> str:
+        ) -> Optional[dict]:
             # append model response with oracle output
+
+            if not output_tag_found:
+                return
 
             oracle_text = re.sub(
                 r"<output>\s*(.*?)\s*</output>",
@@ -155,7 +165,6 @@ async def main():
                 generate_url=generate_url,
             )
 
-            print()
             prefill_details = generate_result["details"]["prefill"]
             prefill_tokens = [x["text"] for x in prefill_details]
             prefill_logprobs = [x["logprob"] for x in prefill_details]
@@ -168,9 +177,9 @@ async def main():
                 begin_pos + skip_begin, end_pos, prefill_tokens, prefill_logprobs
             )
 
-            print("ppl", id, trial, ppl)
-
-            return ""
+            result = {"id": id, "trial": trial, "ppl": ppl}
+            write_jsonl(output_path, [result])
+            return result
 
         results = await process_queue(
             job_generator=read_jsonl(input_path),
