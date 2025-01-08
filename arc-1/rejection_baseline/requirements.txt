@@ -1,0 +1,4 @@
+transformers==4.47.1
+docker==7.1.0 
+aiohttp==3.11.11 
+arckit==0.1.0
