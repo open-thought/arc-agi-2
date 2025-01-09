@@ -73,13 +73,13 @@ def range_perplexity_per_token(
 ) -> float:
     assert len(tokens) == len(logprobs)
     s = 0
-    n = 0
+    t = 0
     for i in range(begin_pos, end_pos):
         if tokens[i].isspace() or tokens[i] in (",", "[", "]"):
             continue
         s += logprobs[i]
-        n += 1
-    return math.exp(-s / n)
+        t += 1
+    return math.exp(-s / t)
 
 
 def write_jsonl(file_name: str | Path, lines: list, mode: str = "a") -> None:
@@ -95,6 +95,12 @@ def read_jsonl(file_name: str | Path) -> Iterator:
     with file_path.open(mode="r", encoding="utf-8") as f:
         for line in f:
             yield json.loads(line)
+
+
+def write_json(file_name: str | Path, data: Any) -> None:
+    file_path = Path(file_name)
+    with file_path.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
 
 
 def read_json(file_name: str | Path) -> Any:

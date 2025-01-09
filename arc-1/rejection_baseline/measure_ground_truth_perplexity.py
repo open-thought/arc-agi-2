@@ -38,7 +38,7 @@ async def determine_oracle_perplexity(
     *,
     session: aiohttp.ClientSession,
     tokenizer: PreTrainedTokenizerBase,
-    input: dict,
+    input: list[dict],
     output: str,
     ground_truth: str,
     generate_url: str,
@@ -51,6 +51,7 @@ async def determine_oracle_perplexity(
         flags=re.DOTALL,
     )
 
+    input = input.copy()
     input.append({"role": "assistant", "content": oracle_text})
 
     # format prompt for model
@@ -59,8 +60,6 @@ async def determine_oracle_perplexity(
     sampling_params = {
         "details": True,
         "decoder_input_details": True,
-        "do_sample": True,
-        "temperature": 1,
         "max_new_tokens": 1,
     }
 
@@ -95,7 +94,8 @@ async def main():
     input_path = Path(args.input_path).expanduser()
     output_path = Path(args.output_path).expanduser()
 
-    async with aiohttp.ClientSession() as session:
+    http_timeout = aiohttp.ClientTimeout(total=600, sock_connect=60)
+    async with aiohttp.ClientSession(timeout=http_timeout) as session:
 
         # launch tgi docker container and wait until it becomes ready
         port = tgi.start_container(
@@ -117,19 +117,19 @@ async def main():
             output: str,
             ground_truth: str,
             output_tag_found: bool,
-            **kwargs
+            **kwargs,
         ) -> Optional[dict]:
             if not output_tag_found:
                 return None
 
             ppl = await determine_oracle_perplexity(
-                    session=session,
-                    tokenizer=tokenizer,
-                    input=input,
-                    output=output,
-                    ground_truth=ground_truth,
-                    generate_url=generate_url,
-                )
+                session=session,
+                tokenizer=tokenizer,
+                input=input,
+                output=output,
+                ground_truth=ground_truth,
+                generate_url=generate_url,
+            )
             if ppl is None:
                 return None
 

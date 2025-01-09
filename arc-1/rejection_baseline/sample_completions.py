@@ -117,10 +117,12 @@ async def sample_concurrent(
                     sampling_params=sampling_params,
                     generate_url=generate_url,
                 )
-                output = generate_result["generated_text"]
-
+                output = generate_result["generated_text"].removeprefix("assistant\n\n")
+            except TimeoutError:
+                print("TimeoutError")
+                continue
             except Exception as e:
-                print("Sampling failed:", e)
+                print("Sampling failed:", e, type(e))
                 time.sleep(1.0)
                 continue
 
@@ -232,7 +234,9 @@ async def main() -> None:
 
     docker_container_name = "tgi_inference"
 
-    async with aiohttp.ClientSession() as session:
+    http_timeout = aiohttp.ClientTimeout(total=600, sock_connect=60)
+    async with aiohttp.ClientSession(timeout=http_timeout) as session:
+
         # launch tgi docker container and wait until it becomes ready
         port = tgi.start_container(
             container_name=docker_container_name,
