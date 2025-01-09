@@ -4,7 +4,7 @@ import re
 from typing import Optional
 import aiohttp
 import asyncio
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
 from utils import (
     write_jsonl,
     read_jsonl,
@@ -34,10 +34,62 @@ def parse_args():
     return args
 
 
+async def determine_oracle_perplexity(
+    *,
+    session: aiohttp.ClientSession,
+    tokenizer: PreTrainedTokenizerBase,
+    input: dict,
+    output: str,
+    ground_truth: str,
+    generate_url: str,
+) -> Optional[dict]:
+    # append model response with oracle output
+    oracle_text = re.sub(
+        r"<output>\s*(.*?)\s*</output>",
+        f"<output>{ground_truth}</output>>",
+        output,
+        flags=re.DOTALL,
+    )
+
+    input.append({"role": "assistant", "content": oracle_text})
+
+    # format prompt for model
+    chat_prompt = tokenizer.apply_chat_template(input, tokenize=False)
+
+    sampling_params = {
+        "details": True,
+        "decoder_input_details": True,
+        "do_sample": True,
+        "temperature": 1,
+        "max_new_tokens": 1,
+    }
+
+    generate_result = await tgi.generate(
+        session=session,
+        prompt=chat_prompt,
+        sampling_params=sampling_params,
+        generate_url=generate_url,
+    )
+
+    prefill_details = generate_result["details"]["prefill"]
+    prefill_tokens = [x["text"] for x in prefill_details]
+    prefill_logprobs = [x["logprob"] for x in prefill_details]
+
+    begin_pos = rfind_token_index(prefill_tokens, "<output>")
+    end_pos = rfind_token_index(prefill_tokens, "</output>")
+
+    skip_begin = 3  # skip open tag tokens
+    ppl = range_perplexity_per_token(
+        begin_pos + skip_begin, end_pos, prefill_tokens, prefill_logprobs
+    )
+
+    return ppl
+
+
 async def main():
     args = parse_args()
     model_id = args.model_id
-    docker_container_name = "measure-ground-truth-tgi"
+    docker_container_name = "tgi_inference"
     input_path = Path(args.input_path).expanduser()
     output_path = Path(args.output_path).expanduser()
 
@@ -55,13 +107,6 @@ async def main():
         generate_url = f"{base_url}/generate"
         tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-        parameters = {
-            "details": True,
-            "decoder_input_details": True,
-            "do_sample": False,
-            "max_new_tokens": 1,
-        }
-
         async def sampling_worker(
             *,
             id: str,
@@ -72,54 +117,17 @@ async def main():
             solved: bool,
             output_tag_found: bool,
         ) -> Optional[dict]:
-            # append model response with oracle output
-
             if not output_tag_found:
-                return
+                return None
 
-            oracle_text = re.sub(
-                r"<output>\s*(.*?)\s*</output>",
-                f"<output>{ground_truth}</output>>",
-                output,
-                flags=re.DOTALL,
-            )
-
-            input.append({"role": "assistant", "content": oracle_text})
-
-            # format prompt for model
-            chat_prompt = tokenizer.apply_chat_template(input, tokenize=False)
-
-            oracle_text = re.sub(
-                r"<output>\s*(.*?)\s*</output>",
-                f"<output>{ground_truth}</output>>",
-                output,
-                flags=re.DOTALL,
-            )
-
-            input.append({"role": "assistant", "content": oracle_text})
-
-            # format prompt for model
-            chat_prompt = tokenizer.apply_chat_template(input, tokenize=False)
-
-            generate_result = await tgi.generate(
+            ppl = await determine_oracle_perplexity(
                 session=session,
-                prompt=chat_prompt,
-                sampling_params=parameters,
+                tokenizer=tokenizer,
+                input=input,
+                output=output,
+                ground_truth=ground_truth,
                 generate_url=generate_url,
             )
-
-            prefill_details = generate_result["details"]["prefill"]
-            prefill_tokens = [x["text"] for x in prefill_details]
-            prefill_logprobs = [x["logprob"] for x in prefill_details]
-
-            begin_pos = rfind_token_index(prefill_tokens, "<output>")
-            end_pos = rfind_token_index(prefill_tokens, "</output>")
-
-            skip_begin = 3  # skip open tag tokens
-            ppl = range_perplexity_per_token(
-                begin_pos + skip_begin, end_pos, prefill_tokens, prefill_logprobs
-            )
-
             result = {"id": id, "trial": trial, "ppl": ppl}
             write_jsonl(output_path, [result])
             return result

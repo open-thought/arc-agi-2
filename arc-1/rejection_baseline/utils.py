@@ -93,3 +93,9 @@ def read_jsonl(file_name: str | Path) -> Iterator:
     with file_path.open(mode="r", encoding="utf-8") as f:
         for line in f:
             yield json.loads(line)
+
+
+def read_json(file_name: str | Path) -> Any:
+    file_path = Path(file_name)
+    with file_path.open(mode="r", encoding="utf-8") as f:
+        return json.load(f)
