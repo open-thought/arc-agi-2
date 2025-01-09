@@ -1,16 +1,10 @@
 import argparse
-import math
 from pathlib import Path
-import random
 import re
-import time
-from typing import Any, Awaitable, Iterator, Optional
+from typing import Optional
 import aiohttp
 import asyncio
-import json
-import docker
 from transformers import AutoTokenizer
-from huggingface_hub.constants import HF_HOME
 from utils import (
     write_jsonl,
     read_jsonl,
@@ -18,18 +12,7 @@ from utils import (
     rfind_token_index,
     range_perplexity_per_token,
 )
-
-
-async def generate_tgi(
-    session: aiohttp.ClientSession,
-    prompt: str,
-    sampling_params: dict[str, Any],
-    generate_url: str,
-) -> dict[str, Any]:
-    data = {"inputs": prompt, "parameters": sampling_params}
-    async with session.post(generate_url, json=data) as r:
-        r.raise_for_status()
-        return await r.json()
+import tgi
 
 
 def parse_args():
@@ -54,63 +37,23 @@ def parse_args():
 async def main():
     args = parse_args()
     model_id = args.model_id
+    docker_container_name = "measure-ground-truth-tgi"
+    input_path = Path(args.input_path).expanduser()
+    output_path = Path(args.output_path).expanduser()
 
     async with aiohttp.ClientSession() as session:
 
-        # launch docker container and wait ready
-
-        docker_container_name = "measure-ground-truth-tgi"
-
-        client = docker.from_env()
-
-        try:
-            container = client.containers.get(docker_container_name)
-            port = container.ports["80/tcp"][0]["HostPort"]
-        except docker.errors.NotFound:
-            port = random.randint(8000, 9000)
-            container = client.containers.run(
-                image="ghcr.io/huggingface/text-generation-inference:3.0.1",
-                command=[
-                    "--model-id",
-                    model_id,
-                    "--num-shard",
-                    str(args.num_shard),
-                    "--enable-prefill-logprobs",
-                ],
-                runtime="nvidia",
-                shm_size="1G",
-                device_requests=[
-                    docker.types.DeviceRequest(
-                        count=-1,  # -1 means 'all available GPUs'
-                        capabilities=[["gpu"]],  # Requests GPU devices
-                    )
-                ],
-                detach=True,
-                name=docker_container_name,
-                auto_remove=True,
-                ports={"80/tcp": port},
-                volumes={HF_HOME: {"bind": "/data", "mode": "rw"}},
-            )
-
-        # wait for tgi to become ready
+        # launch tgi docker container and wait until it becomes ready
+        port = tgi.start_container(
+            container_name=docker_container_name,
+            model_id=model_id,
+            num_shard=args.num_shard,
+        )
         base_url = f"http://localhost:{port}"
+        await tgi.until_ready(session, base_url, max_tries=90)
+
         generate_url = f"{base_url}/generate"
-
-        max_wait_ready = 90
-        for _ in range(max_wait_ready):
-            try:
-                async with session.get(url=f"{base_url}/health") as response:
-                    response.raise_for_status()
-                    break
-            except Exception:
-                time.sleep(1)
-        else:
-            raise RuntimeError("TGI server launch timed out.")
-
         tokenizer = AutoTokenizer.from_pretrained(model_id)
-
-        input_path = Path(args.input_path).expanduser()
-        output_path = Path(args.output_path).expanduser()
 
         parameters = {
             "details": True,
@@ -158,7 +101,7 @@ async def main():
             # format prompt for model
             chat_prompt = tokenizer.apply_chat_template(input, tokenize=False)
 
-            generate_result = await generate_tgi(
+            generate_result = await tgi.generate(
                 session=session,
                 prompt=chat_prompt,
                 sampling_params=parameters,
