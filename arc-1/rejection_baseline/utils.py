@@ -58,6 +58,8 @@ async def process_queue(
 def rfind_token_index(tokens: list[str], sub: str) -> int:
     combined = "".join(tokens)
     found_index = combined.rfind(sub)
+    if found_index < 0:
+        return -1
     l = 0
     i = 0
     while l < found_index:

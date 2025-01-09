@@ -42,7 +42,7 @@ async def determine_oracle_perplexity(
     output: str,
     ground_truth: str,
     generate_url: str,
-) -> Optional[dict]:
+) -> Optional[float]:
     # append model response with oracle output
     oracle_text = re.sub(
         r"<output>\s*(.*?)\s*</output>",
@@ -77,6 +77,8 @@ async def determine_oracle_perplexity(
 
     begin_pos = rfind_token_index(prefill_tokens, "<output>")
     end_pos = rfind_token_index(prefill_tokens, "</output>")
+    if end_pos < begin_pos or begin_pos < 0 or end_pos < 0:
+        return None
 
     skip_begin = 3  # skip open tag tokens
     ppl = range_perplexity_per_token(
@@ -114,20 +116,23 @@ async def main():
             input: dict,
             output: str,
             ground_truth: str,
-            solved: bool,
             output_tag_found: bool,
+            **kwargs
         ) -> Optional[dict]:
             if not output_tag_found:
                 return None
 
             ppl = await determine_oracle_perplexity(
-                session=session,
-                tokenizer=tokenizer,
-                input=input,
-                output=output,
-                ground_truth=ground_truth,
-                generate_url=generate_url,
-            )
+                    session=session,
+                    tokenizer=tokenizer,
+                    input=input,
+                    output=output,
+                    ground_truth=ground_truth,
+                    generate_url=generate_url,
+                )
+            if ppl is None:
+                return None
+
             result = {"id": id, "trial": trial, "ppl": ppl}
             write_jsonl(output_path, [result])
             return result

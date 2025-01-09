@@ -39,6 +39,8 @@ def start_container(
                 "--num-shard",
                 str(num_shard),
                 "--enable-prefill-logprobs",
+                "--max-concurrent-requests",
+                "1024"
             ],
             shm_size="1G",
             device_requests=[
