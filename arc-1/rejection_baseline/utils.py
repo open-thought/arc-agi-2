@@ -72,6 +72,7 @@ def range_perplexity_per_token(
     begin_pos: int, end_pos: int, tokens: list[str], logprobs: list[float]
 ) -> float:
     assert len(tokens) == len(logprobs)
+    assert end_pos > begin_pos
     s = 0
     t = 0
     for i in range(begin_pos, end_pos):

@@ -76,10 +76,11 @@ async def determine_oracle_perplexity(
 
     begin_pos = rfind_token_index(prefill_tokens, "<output>")
     end_pos = rfind_token_index(prefill_tokens, "</output>")
-    if end_pos < begin_pos or begin_pos < 0 or end_pos < 0:
-        return None
 
     skip_begin = 3  # skip open tag tokens
+    if end_pos <= (begin_pos + skip_begin) or begin_pos < 0 or end_pos < 0:
+        return None
+
     ppl = range_perplexity_per_token(
         begin_pos + skip_begin, end_pos, prefill_tokens, prefill_logprobs
     )
