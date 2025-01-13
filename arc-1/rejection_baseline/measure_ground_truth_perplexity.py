@@ -10,7 +10,7 @@ from utils import (
     read_jsonl,
     process_queue,
     rfind_token_index,
-    range_perplexity_per_token,
+    range_perplexity,
 )
 import tgi
 
@@ -81,7 +81,7 @@ async def determine_oracle_perplexity(
     if end_pos <= (begin_pos + skip_begin) or begin_pos < 0 or end_pos < 0:
         return None
 
-    ppl = range_perplexity_per_token(
+    ppl = range_perplexity(
         begin_pos + skip_begin, end_pos, prefill_tokens, prefill_logprobs
     )
 

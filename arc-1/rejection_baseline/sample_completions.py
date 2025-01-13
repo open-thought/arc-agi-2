@@ -9,7 +9,7 @@ from typing import Iterator, Optional
 import aiohttp
 from utils import (
     process_queue,
-    range_perplexity_per_token,
+    range_perplexity,
     read_json,
     rfind_token_index,
     write_jsonl,

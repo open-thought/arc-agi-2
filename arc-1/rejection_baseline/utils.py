@@ -68,7 +68,7 @@ def rfind_token_index(tokens: list[str], sub: str) -> int:
     return i
 
 
-def range_perplexity_per_token(
+def range_perplexity(
     begin_pos: int, end_pos: int, tokens: list[str], logprobs: list[float]
 ) -> float:
     assert len(tokens) == len(logprobs)
