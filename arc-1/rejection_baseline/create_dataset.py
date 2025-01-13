@@ -17,6 +17,17 @@ def parse_args() -> argparse.Namespace:
         default="./output/llama-3.2-3B-instruct-stage0-simple-t5-64.jsonl",
         help="Input JSONL file path",
     )
+    parser.add_argument(
+        "--plot-ppl",
+        action="store_true",
+        help="Plot the PPL distribution",
+    )
+    parser.add_argument(
+        "--cutoff",
+        type=float,
+        default=2.0,
+        help="Cutoff value for PPL distribution plot (default: 2.0)",
+    )
     return parser.parse_args()
 
 
@@ -76,8 +87,9 @@ def main():
         valid_ppls = [p for p in ppls if p is not None]
         print(f"ID {id}: {len(ppls)} entries, {len(valid_ppls)} with valid PPL values")
 
-    # Create and show the PPL distribution plot
-    plot_ppl_distribution(ppl_by_id)
+    # Create and show the PPL distribution plot if requested
+    if args.plot_ppl:
+        plot_ppl_distribution(ppl_by_id, cutoff=args.cutoff)
 
 
 if __name__ == "__main__":
