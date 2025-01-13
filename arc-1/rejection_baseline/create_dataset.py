@@ -23,6 +23,17 @@ def parse_args() -> argparse.Namespace:
         help="Plot the PPL distribution",
     )
     parser.add_argument(
+        "--create",
+        action="store_true",
+        help="Create dataset with top-k entries per ID",
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=3,
+        help="Number of entries to keep per ID (default: 3)",
+    )
+    parser.add_argument(
         "--cutoff",
         type=float,
         default=2.0,
@@ -71,6 +82,21 @@ def plot_ppl_distribution(ppl_by_id: dict[str, list[Optional[float]]], cutoff: f
     plt.show()
 
 
+def create_dataset_topk(ppl_by_id: dict[str, list[Optional[float]]], k: int) -> None:
+    """Find the top-k best (lowest) PPL values for each ID."""
+    print(f"\nAnalyzing top-{k} PPL values per ID:")
+    for id, ppls in ppl_by_id.items():
+        # Filter out None values
+        valid_ppls = [p for p in ppls if p is not None]
+        
+        if len(valid_ppls) >= k:
+            # Sort PPL values in ascending order and get the k-th value
+            sorted_ppls = sorted(valid_ppls)
+            kth_value = sorted_ppls[k-1]
+            print(f"ID {id}: {k}-th best PPL value = {kth_value:.4f}")
+        else:
+            print(f"ID {id}: Not enough valid PPL values (found {len(valid_ppls)}, need {k})")
+
 def main():
     args = parse_args()
     input_path = Path(args.input)
@@ -90,6 +116,10 @@ def main():
     # Create and show the PPL distribution plot if requested
     if args.plot_ppl:
         plot_ppl_distribution(ppl_by_id, cutoff=args.cutoff)
+        
+    # Create dataset with top-k entries if requested
+    if args.create:
+        create_dataset_topk(ppl_by_id, args.k)
 
 
 if __name__ == "__main__":
