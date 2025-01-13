@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=str,
         default="./output/stage0-filtered.jsonl",
-        help="Input JSONL file path",
+        help="Output JSONL file path",
     )
     parser.add_argument(
         "--plot-ppl",
@@ -76,7 +76,7 @@ def read_filtered_entries(
                 id in thresholds
                 and (id not in filtered_result or len(filtered_result[id]) < max_per_id)
                 and ppl is not None
-                and ppl < thresholds[id]
+                and ppl <= thresholds[id]
             ):
                 if id not in filtered_result:
                     filtered_result[id] = []
@@ -150,6 +150,7 @@ def create_dataset_topk(
 
     # generate dataset to be used by trainer
     with open(output_file_path, "w", encoding="utf-8") as f:
+        print(f"writing: {output_file_path}")
         for id in filtered_entries:
             entry_list = filtered_entries[id]
             for entry in entry_list:

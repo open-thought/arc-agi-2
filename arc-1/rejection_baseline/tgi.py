@@ -1,3 +1,4 @@
+from pathlib import Path
 import random
 import time
 from typing import Any
@@ -31,6 +32,13 @@ def start_container(
         port = container.ports["80/tcp"][0]["HostPort"]
     except docker.errors.NotFound:
         port = random.randint(8000, 9000)
+
+        volumes = {HF_HOME: {"bind": "/data", "mode": "rw"}}
+
+        if Path(model_id).exists():
+            volumes[model_id] = {"bind": "/data/model", "mode": "rw"}
+            model_id = "/data/model"
+
         container = client.containers.run(
             image=image_name,
             command=[
@@ -40,7 +48,7 @@ def start_container(
                 str(num_shard),
                 "--enable-prefill-logprobs",
                 "--max-concurrent-requests",
-                "1024"
+                "1024",
             ],
             shm_size="1G",
             device_requests=[
@@ -53,7 +61,7 @@ def start_container(
             name=container_name,
             auto_remove=auto_remove,
             ports={"80/tcp": port},
-            volumes={HF_HOME: {"bind": "/data", "mode": "rw"}},
+            volumes=volumes,
         )
     return port
 
