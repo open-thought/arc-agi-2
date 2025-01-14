@@ -36,7 +36,7 @@ def start_container(
         volumes = {HF_HOME: {"bind": "/data", "mode": "rw"}}
 
         if Path(model_id).exists():
-            volumes[model_id] = {"bind": "/data/model", "mode": "rw"}
+            volumes[Path(model_id).absolute()] = {"bind": "/data/model", "mode": "rw"}
             model_id = "/data/model"
 
         container = client.containers.run(

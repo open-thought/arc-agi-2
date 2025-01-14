@@ -32,6 +32,8 @@ class Stats:
         self.solved = 0
         self.skipped = 0
         self.solved_ids = []
+        self.ppl_sum = 0
+        self.ppl_count = 0
 
 
 def format_riddle_input(
@@ -117,7 +119,12 @@ async def sample_concurrent(
                     sampling_params=sampling_params,
                     generate_url=generate_url,
                 )
-                output = generate_result["generated_text"].removeprefix("assistant\n\n")
+                output = (
+                    generate_result["generated_text"]
+                    .removeprefix("assistant\n\n")
+                    .removeprefix("assistantassistant\n\n")  # after first round of finetuning we got some strange completions (check tokenization)
+                    .removeprefix("assistant\n")
+                )
             except TimeoutError:
                 print("TimeoutError")
                 continue
@@ -151,6 +158,8 @@ async def sample_concurrent(
                     ground_truth=target,
                     generate_url=generate_url,
                 )
+                stats.ppl_sum += ppl
+                stats.ppl_count += 1
             else:
                 ppl = None
 
@@ -189,6 +198,13 @@ async def sample_concurrent(
         worker_func=sampling_worker,
         max_concurrent=max_concurrent,
     )
+
+    if stats.ppl_count > 0:
+        print(
+            f"Avg ppl: {stats.ppl_sum / stats.ppl_count}, ppl_count: {stats.ppl_count}"
+        )
+    else:
+        print("Could not measure oracle ppl (no <output> tags in output).")
 
     print(f"\nSolved: {stats.solved}/{len(riddle_ids)}")
     print(f"Skipped: {stats.skipped}")
@@ -252,7 +268,9 @@ async def main() -> None:
         if output_path.exists():
             for l in read_jsonl(output_path):
                 completed_ids.add(l["id"])
-            print(f"Found {len(completed_ids)} already sampled riddles in file {str(output_path)}.")
+            print(
+                f"Found {len(completed_ids)} already sampled riddles in file {str(output_path)}."
+            )
 
         dataset = {}
         train_set, eval_set = arckit.load_data()

@@ -20,12 +20,8 @@ async def process_queue(
     results = []
 
     async def run_job(job):
-        try:
-            result = await worker_func(**job)
-            results.append(result)
-        finally:
-            if task in active_tasks:
-                active_tasks.remove(task)
+        result = await worker_func(**job)
+        results.append(result)
 
     # Process jobs until generator is exhausted
     try:
@@ -44,7 +40,7 @@ async def process_queue(
 
         # Wait for remaining tasks to complete
         if active_tasks:
-            await asyncio.wait(active_tasks)
+            await asyncio.wait(active_tasks, return_when=asyncio.ALL_COMPLETED)
 
     except Exception as e:
         # Cancel any remaining tasks on error
