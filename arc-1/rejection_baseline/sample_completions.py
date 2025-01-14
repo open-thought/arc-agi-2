@@ -2,6 +2,7 @@ import argparse
 import asyncio
 from itertools import chain
 import json
+from pathlib import Path
 import re
 import time
 from typing import Iterator, Optional
@@ -9,9 +10,8 @@ from typing import Iterator, Optional
 import aiohttp
 from utils import (
     process_queue,
-    range_perplexity,
     read_json,
-    rfind_token_index,
+    read_jsonl,
     write_jsonl,
 )
 import tgi
@@ -246,14 +246,22 @@ async def main() -> None:
         base_url = f"http://localhost:{port}"
         await tgi.until_ready(session, base_url, max_tries=90)
 
+        # allow resuming an aborted sampling runs by excluding riddles that were already processed
+        completed_ids = set()
+        output_path = Path(args.jsonl_output_path)
+        if output_path.exists():
+            for l in read_jsonl(output_path):
+                completed_ids.add(l["id"])
+            print(f"Found {len(completed_ids)} already sampled riddles in file {str(output_path)}.")
+
         dataset = {}
         train_set, eval_set = arckit.load_data()
         for x in chain(train_set, eval_set):
-            if eval_ids is None or x.id in eval_ids:
+            if (eval_ids is None or x.id in eval_ids) and x.id not in completed_ids:
                 dataset[x.id] = x.to_dict()
 
         riddle_ids = sorted(dataset.keys())
-        print(f"Total number of riddles: {len(riddle_ids)}")
+        print(f"Number of riddles to sample: {len(riddle_ids)}")
 
         num_trials = args.trials
 
