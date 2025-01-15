@@ -1,4 +1,4 @@
-base_model: meta-llama/Llama-3.2-3B-Instruct
+base_model: outputs/stage1/checkpoint-160/
 
 plugins:
   - axolotl.integrations.liger.LigerPlugin
@@ -11,7 +11,7 @@ strict: false
 
 chat_template: llama3
 datasets:
-  - path: ./data/stage0-filtered.jsonl
+  - path: ./data/stage1-filtered.jsonl
     type: chat_template
     split: train
     field_messages: conversations
@@ -19,10 +19,10 @@ datasets:
     message_field_content: value
     ds_type: json
 
-dataset_prepared_path: stage0_prepared
-val_set_size: 0.02
+dataset_prepared_path: stage1_prepared
+val_set_size: 0.04
 
-output_dir: ./outputs/out
+output_dir: ./outputs/stage2
 
 sequence_len: 8192
 #sequence_len: 6000
@@ -33,12 +33,12 @@ pad_to_sequence_len: true
 wandb_project: arc-rejection-sampling
 wandb_entity:
 wandb_watch:
-wandb_name: stage0
+wandb_name: stage1
 wandb_log_model:
 
 gradient_accumulation_steps: 4
 micro_batch_size: 2
-num_epochs: 3
+num_epochs: 2
 optimizer: adamw_torch
 lr_scheduler: cosine
 learning_rate: 2e-5     # saw 2e-4 in unsloth tutorials, or 4e-5 here https://wandb.ai/zhafranr/LLaMA_3-2_3B_Instruct_FineTune_Text2SQL/reports/LLaMa-3-2-3B-Instruct-Fine-Tune-Text2SQL--VmlldzoxMDA2NDkzNA
