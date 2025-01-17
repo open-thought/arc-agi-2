@@ -1,7 +1,29 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
+from litellm import AsyncOpenAI
+from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
+
+
+async def llm_generate(
+    client: AsyncOpenAI,
+    messages: Iterable[ChatCompletionMessageParam],
+    sampling_params: dict[str, Any],
+) -> ChatCompletion:
+    max_retry = 3
+    for trial in range(max_retry):
+        try:
+            return await client.chat.completions.create(
+                extra_headers={"X-Title": "open-thought"},
+                messages=messages,
+                **sampling_params,
+            )
+        except Exception as e:
+            print("failure response:", e)
+            await asyncio.sleep(trial * trial)  # quadratic backoff
+            if trial == max_retry - 1:
+                raise
 
 
 async def process_queue(

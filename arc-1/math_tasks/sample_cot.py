@@ -7,28 +7,7 @@ import re
 import time
 from typing import Any, Iterable, Iterator
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
-from utils import write_jsonl, process_queue
-
-
-async def llm_generate(
-    client: AsyncOpenAI,
-    messages: Iterable[ChatCompletionMessageParam],
-    sampling_params: dict[str, Any],
-) -> ChatCompletion:
-    max_retry = 3
-    for trial in range(max_retry):
-        try:
-            return await client.chat.completions.create(
-                extra_headers={"X-Title": "open-thought"},
-                messages=messages,
-                **sampling_params,
-            )
-        except Exception as e:
-            print("failure response:", e)
-            time.sleep(trial * trial)  # quadratic backoff
-            if trial == max_retry - 1:
-                raise
+from utils import write_jsonl, process_queue, llm_generate
 
 
 class BasicIntArithmeticTaskConfig:
