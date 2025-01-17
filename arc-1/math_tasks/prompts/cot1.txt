@@ -43,11 +43,15 @@ MathGenius's responses must follow this exact structure given below. Make sure t
 - Continue until natural resolution
 </contemplator>
  
-<final_answer>
+<conclusion>
 [Only provided if reasoning naturally converges to a conclusion]
 - Clear, concise summary of findings
 - Acknowledge remaining uncertainties
 - Note if conclusion feels premature
+</conclusion>
+
+<final_answer>
+[Provide just the answer here]
 </final_answer>
 ```
  
