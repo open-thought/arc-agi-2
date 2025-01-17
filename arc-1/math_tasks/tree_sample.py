@@ -7,36 +7,41 @@ from litellm import AsyncOpenAI
 from utils import write_jsonl, process_queue, llm_generate
 
 
-supervisor_developer_prompt = "You are the superviser of an apprentice assistant. You provide instructions to the assistant and teach her in fulfilling the user's request efficiently and sucessfully."
+supervisor_developer_prompt = "You are the supervisor of an apprentice assistant. You provide instructions and guidance to help them fulfill user requests efficiently and successfully."
 supervisor_prompt_template = """<user_request>{0}</user_request>
 
-These are the thoughts of the assistant so far (empty in the beginning):
+Previous assistant thoughts (if any):
 <thoughts>{1}</thoughts>
 
-Break the process in small simple chunks of work. Considering the thoughts so far what would be a logical next instruction to the assistant? Just generate the message for the assistant.
-"""
+Instructions:
+- Break down remaining work into small, manageable tasks
+- Consider dependencies and optimal task ordering
+- Provide clear, specific instructions for the next logical step
+
+Based on the current state, provide the next instruction. Just generate the message for the assistant."""
 
 
-assistant_developer_prompt = "You process the next step for a user requests. Your goal is to make progress in fullfilling the requset. Follow the instructions."
-assistant_prompt_template = """ 
-Consider the <user_request>{0}</user_request>.
+assistant_developer_prompt = """You are a capable assistant focused on methodically processing user requests. Your goal is to execute the currrent instruction thoughtfully."""
+assistant_prompt_template = """<user_request>{0}</user_request>
 
-Notes on the request so far:
+Progress notes:
 <thoughts>{1}</thoughts>
 
-Your instructions:
-{2}
+Current instruction:
+<instruction>{2}</instruction>
 
-Your answer text will automatically become a new thought. Don't generate tags, only the content.
+Focus on clear, actionable results. Your answer text will automatically become a new thought. Don't generate thought-tags, only the content.
 """
 
 
 def generate_supervisor_prompt(user_task: str, thoughts: list[str]) -> list[dict]:
-    thoughts_formatted = '\n'.join([f'<though id={i}>\n{t}</thought>' for i,t in enumerate(thoughts)])
+    thoughts_formatted = "\n".join(
+        [f"<thought id={i}>\n{t}</thought>" for i, t in enumerate(thoughts)]
+    )
     supervisor_prompt = supervisor_prompt_template.format(user_task, thoughts_formatted)
-    #print("supervisor_prompt", supervisor_prompt)
+    # print("supervisor_prompt", supervisor_prompt)
     return [
-          {
+        {
             "role": "system",
             "content": supervisor_developer_prompt,
         },
@@ -47,10 +52,16 @@ def generate_supervisor_prompt(user_task: str, thoughts: list[str]) -> list[dict
     ]
 
 
-def generate_assistant_prompt(user_task: str, step_instructions: str, thoughts: list[str]) -> list[dict]:
-    thoughts_formatted = '\n'.join([f'<though id={i}>\n{t}</thought>' for i,t in enumerate(thoughts)])
-    assistant_prompt = assistant_prompt_template.format(user_task, thoughts_formatted, step_instructions)
-    #print("assistant_prompt", assistant_prompt)
+def generate_assistant_prompt(
+    user_task: str, step_instructions: str, thoughts: list[str]
+) -> list[dict]:
+    thoughts_formatted = "\n".join(
+        [f"<thought id={i}>\n{t}</thought>" for i, t in enumerate(thoughts)]
+    )
+    assistant_prompt = assistant_prompt_template.format(
+        user_task, thoughts_formatted, step_instructions
+    )
+    # print("assistant_prompt", assistant_prompt)
     return [
         {
             "role": "system",
@@ -66,30 +77,36 @@ def generate_assistant_prompt(user_task: str, step_instructions: str, thoughts: 
 async def generate_thought_sequence(
     task_prompt: str, client: AsyncOpenAI, sampling_params: dict, max_depth: int = 10
 ) -> None:
-    thought_history = []
+    instruction_trace = []
+    thought_trace = []
 
     sampling_params_creative = sampling_params.copy()
     sampling_params_creative["temperature"] = 0.5
     sampling_params_creative["top_p"] = 0.9
 
-    for i in range(5):
-        supervisor_prompt = generate_supervisor_prompt(task_prompt, thoughts=thought_history)
+    for i in range(max_depth):
+        supervisor_prompt = generate_supervisor_prompt(
+            task_prompt, thoughts=thought_trace
+        )
         output = await llm_generate(client, supervisor_prompt, sampling_params_creative)
         next_step_instruction = output.choices[0].message.content
+        instruction_trace.append(next_step_instruction)
 
-        #print(f"Instruction: {next_step_instruction}\n\n")
+        # print(f"Instruction: {next_step_instruction}\n\n")
 
-        assistant_prompt = generate_assistant_prompt(task_prompt, next_step_instruction, thoughts=thought_history)
+        assistant_prompt = generate_assistant_prompt(
+            task_prompt, next_step_instruction, thoughts=thought_trace
+        )
         output = await llm_generate(client, assistant_prompt, sampling_params)
         assistant_thought = output.choices[0].message.content
-        thought_history.append(assistant_thought)
+        thought_trace.append(assistant_thought)
 
-        #print(f"Thought: {assistant_thought}\n\n")
+        # print(f"Thought: {assistant_thought}\n\n")
 
     print(f"Task: {task_prompt}")
-    for i,t in enumerate(thought_history):
-        print(f'[{i}]:', t)
-    
+    for i in range(len(instruction_trace)):
+        # print(f"Instruction {i}:", instruction_trace[i])
+        print(f"[{i}]:", thought_trace[i])
 
 
 def parse_args() -> argparse.Namespace:
@@ -127,10 +144,13 @@ async def main():
             },
         }
 
-    user_task_prompt = "43 + 1231 + 91 + 1 + 3 ="
+    #user_task_prompt = "43 + 1231 + 91 + 1 + 3 ="
+    user_task_prompt = "43 + 1231 + 91 + (1124 + 311) * -5 ="
+    # user_task_prompt = "Hello, how are you?"
+    # user_task_prompt = "Write a nice poem about adding numbers."
 
     await generate_thought_sequence(
-        user_task_prompt, open_router_client, sampling_params
+        user_task_prompt, open_router_client, sampling_params, max_depth=10
     )
 
 
