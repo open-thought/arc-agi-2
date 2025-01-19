@@ -289,8 +289,7 @@ class MctsSearch(MctsParamsBase):
             return
 
         print(
-            f"root {{ value: {self.root.value}, max_children: {self.root.max_children} }}; "
-            f"selected: depth={node.depth}, type={node.node_type}, visits={node.visits} "
+            f"[{self.tree_id}] value: {self.root.value}, visits={self.root.visits}, root_children: {self.root.max_children}"
         )
         task_prompt, instructions, thoughts = node.traces()
 
@@ -394,11 +393,11 @@ async def main():
     tree_dump_interval = 10
 
     tasks = [
-        {
-            "id": "task_1",
-            "task_prompt": "43 + 1231 + 91 + (1124 + 311) * -75 =",
-            "ground_truth": "-106260",
-        },
+        # {
+        #     "id": "task_1",
+        #     "task_prompt": "43 + 1231 + 91 + (1124 + 311) * -75 =",
+        #     "ground_truth": "-106260",
+        # },
         {
             "id": "task_2",
             "task_prompt": "92183 * 192281 =",
@@ -409,16 +408,16 @@ async def main():
             "task_prompt": "-(82194 + (19191+ 391+ 12+ 71)) =",
             "ground_truth": "-101859",
         },
-        # {
-        #     "id": "task_4",
-        #     "task_prompt": "-(972647*22368)-108 =",
-        #     "ground_truth": "-21756168204",
-        # },
-        # {
-        #     "id": "task_5",
-        #     "task_prompt": "8376194 + 192 - (1092841 * 2 + 891901) =",
-        #     "ground_truth": "5298803",
-        # },
+        {
+            "id": "task_4",
+            "task_prompt": "-(972647*268)-108 =",
+            "ground_truth": "-260669504",
+        },
+        {
+            "id": "task_5",
+            "task_prompt": "8376194 + 192 - (1092841 * 2 + 891901) =",
+            "ground_truth": "5298803",
+        },
     ]
 
     async def sample_and_write_result(id: str, task_prompt: str, ground_truth: str):
