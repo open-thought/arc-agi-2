@@ -1,7 +1,8 @@
 import argparse
 import asyncio
-from enum import Enum, StrEnum
+from enum import StrEnum
 import os
+from pathlib import Path
 from random import Random
 import re
 from typing import Optional, Self
@@ -143,7 +144,7 @@ async def rollout_thought_sequence(
     final_answer = None
     next_instructions = None
     if len(instruction_trace) > len(thought_trace):
-        next_instructions = instruction_trace[-1]
+        next_instructions = instruction_trace.pop()
 
     for i in range(start_depth, max_depth):
         if next_instructions is None:
@@ -358,7 +359,10 @@ def parse_args() -> argparse.Namespace:
         "--model", type=str, default="meta-llama/llama-3.3-70b-instruct"
     )
     parser.add_argument("--max_concurrent", type=int, default=1)
-    parser.add_argument("--output_jsonl", type=str, default="output.jsonl")
+    parser.add_argument("--output_path", type=str, default="./output/")
+    parser.add_argument("--num_rollouts", type=int, default=10)
+    parser.add_argument("--max_depth", type=int, default=15)
+    parser.add_argument("--tree_dump_interval", type=int, default=10)
     args = parser.parse_args()
     return args
 
@@ -388,9 +392,13 @@ async def main():
     if args.quantization:
         sampling_params["extra_body"]["provider"]["quantizations"] = args.quantization
 
-    num_rollouts = 150
-    max_depth = 10
-    tree_dump_interval = 10
+    num_rollouts = args.num_rollouts
+    max_depth = args.max_depth
+    tree_dump_interval = args.tree_dump_interval
+    output_path = Path(args.output_path)
+
+    if not output_path.exists():
+        output_path.mkdir(parents=True)
 
     tasks = [
         # {
@@ -403,19 +411,19 @@ async def main():
             "task_prompt": "92183 * 192281 =",
             "ground_truth": "17725039423",
         },
-        {
-            "id": "task_3",
-            "task_prompt": "-(82194 + (19191+ 391+ 12+ 71)) =",
-            "ground_truth": "-101859",
-        },
+        # {
+        #     "id": "task_3",
+        #     "task_prompt": "Evaluate -(82194 + (19191+ 391+ 12+ 71)) =",
+        #     "ground_truth": "-101859",
+        # },
         {
             "id": "task_4",
-            "task_prompt": "-(972647*268)-108 =",
+            "task_prompt": "Calculate -(972647*268)-108 =",
             "ground_truth": "-260669504",
         },
         {
             "id": "task_5",
-            "task_prompt": "8376194 + 192 - (1092841 * 2 + 891901) =",
+            "task_prompt": "What is 8376194 + 192 - (1092841 * 2 + 891901) ??",
             "ground_truth": "5298803",
         },
     ]
@@ -426,12 +434,12 @@ async def main():
             ground_truth=ground_truth,
             client=open_router_client,
             sampling_params=sampling_params,
-            rollouts_filename=f"output/{id}_rollouts.jsonl",
+            rollouts_filename=output_path / f"{id}_rollouts.jsonl",
             max_depth=max_depth,
             step_discount=0.95,
         )
 
-        tree_filename = f"output/{id}_tree.json"
+        tree_filename = output_path / f"{id}_tree.json"
         for i in range(num_rollouts):
             try:
                 await s.step()
