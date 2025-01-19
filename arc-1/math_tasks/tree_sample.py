@@ -1,32 +1,47 @@
 import argparse
 import asyncio
-from enum import Enum
+from enum import Enum, StrEnum
 import os
 from random import Random
 import re
 from typing import Optional, Self
+from uuid import uuid4
 
 from litellm import AsyncOpenAI
-from utils import write_jsonl, process_queue, llm_generate
+from utils import write_json, write_jsonl, process_queue, llm_generate
 from mcts import NodeBase, MctsParamsBase
 
 
-supervisor_developer_prompt = "You are the supervisor of an apprentice assistant. You provide instructions and guidance to help them fulfill user requests efficiently and successfully."
+supervisor_developer_prompt = """You are the supervisor of an apprentice assistant. You provide instructions and guidance to help them fulfill user requests efficiently and successfully.
+No tools like calculator or web-search are available."""
+
 supervisor_prompt_template = """<user_request>{0}</user_request>
 
 Previous assistant thoughts (if any):
 <thoughts>{1}</thoughts>
 
 Instructions:
-- Break down remaining work into small, manageable tasks
+- Break down remaining work into small, atomic tasks
 - Consider dependencies and optimal task ordering
 - Provide clear, specific instructions for the next logical step
 
 Based on the current state, provide the next instruction. Just generate the message for the assistant."""
 
+check_completion_template = """<user_request>{0}</user_request>
+
+Assistant's thoughts:
+<thoughts>{1}</thoughts>
+
+Classify the assistant's thoughts:
+- If we are still in the middle of reasoning or the last verification failed, reply with <continue/>.
+- If you suspect an error among the last thoughts, generate a verification instruction inside a <verify> tag.
+- When the last thought contains a correct final answer, extract and copy it verbatim into an <output> tag.
+
+Generate a single <continue/>, <verify> or <output> tag.
+"""
 
 assistant_developer_prompt = """You are a capable assistant focused on methodically processing user requests. Your goal is to execute the currrent instruction thoughtfully.
-You don't have a calculator tool, compute manually step-by-step."""
+You don't have access to a calculator or web-search."""
 assistant_prompt_template = """<user_request>{0}</user_request>
 
 Progress notes:
@@ -35,23 +50,8 @@ Progress notes:
 Current instruction:
 <instruction>{2}</instruction>
 
-Focus on clear, actionable results, don't hallucinate.
-Your answer text will automatically become a new thought. Don't generate thought-tags, only the content.
-"""
-
-
-check_completion_template = """
-<user_request>{0}</user_request>
-
-Assistant's thoughts:
-<thoughts>{1}</thoughts>
-
-Classify the assistant's thoughts based on these rules:
-- if we are still in the middle of the thought process or the last verification found the answer to be incorrect, reply with <continue/>.
-- if there is an answer in last thoughts but no cross-check verification thought, generate a verification instructions inside a <verify> tag.
-- when the last thought contains a verified correct result, extract the answer and copy it verabtim inside a <output> tag.
-
-Answer with a single <verify>, <output> or <continue/> tag.
+Focus on clear, actionable results, don't hallucinate. What is your single next immediate atomic thought?
+Your answer text will automatically become a new thought item. Don't generate thought-tags, only the content.
 """
 
 
@@ -71,13 +71,12 @@ def generate_simple_request(user_prompt: str, developer_prompt: str) -> list[dic
 def format_thoughts(thoughts: list[str]) -> str:
     if not thoughts:
         return ""
-    return f'\n{"\n".join([f"<thought id=\"{i}\">{t}</thought>" for i, t in enumerate(thoughts)])}\n'
+    return f'\n{"\n\n".join(thoughts)}\n'
 
 
 def generate_supervisor_prompt(user_task: str, thoughts: list[str]) -> list[dict]:
     thoughts_formatted = format_thoughts(thoughts)
     supervisor_prompt = supervisor_prompt_template.format(user_task, thoughts_formatted)
-    # print("supervisor_prompt", supervisor_prompt)
     return generate_simple_request(supervisor_prompt, supervisor_developer_prompt)
 
 
@@ -88,7 +87,6 @@ def generate_assistant_prompt(
     assistant_prompt = assistant_prompt_template.format(
         user_task, thoughts_formatted, step_instructions
     )
-    # print("assistant_prompt", assistant_prompt)
     return generate_simple_request(assistant_prompt, assistant_developer_prompt)
 
 
@@ -97,8 +95,21 @@ def generate_check_completion_prompt(user_task: str, thoughts: list[str]) -> lis
     check_completion_prompt = check_completion_template.format(
         user_task, thoughts_formatted
     )
-    # print("assistant_prompt", assistant_prompt)
     return generate_simple_request(check_completion_prompt, supervisor_developer_prompt)
+
+
+def add_temperature_setting(
+    sampling_params: dict,
+    temperature: float,
+    top_p: Optional[float],
+) -> dict:
+    sampling_params = sampling_params.copy()
+    sampling_params["temperature"] = temperature
+    if temperature > 0 and top_p is not None:
+        sampling_params["top_p"] = top_p
+    elif "top_p" in sampling_params:
+        del sampling_params["top_p"]
+    return sampling_params
 
 
 async def rollout_thought_sequence(
@@ -117,13 +128,13 @@ async def rollout_thought_sequence(
         and len(instruction_trace) - len(thought_trace) <= 1
     )
 
-    sampling_params_creative = sampling_params.copy()
-    sampling_params_creative["temperature"] = 0.7
-    sampling_params_creative["top_p"] = 0.9
-
-    sampling_params_mild = sampling_params.copy()
-    sampling_params_mild["temperature"] = 0.1
-    sampling_params_mild["top_p"] = 0.9
+    params_creative = add_temperature_setting(
+        sampling_params, temperature=0.7, top_p=0.9
+    )
+    params_mild = add_temperature_setting(sampling_params, temperature=0.1, top_p=0.95)
+    params_strict = add_temperature_setting(
+        sampling_params, temperature=0.05, top_p=0.99
+    )
 
     start_depth = len(thought_trace)
     if start_depth >= max_depth:
@@ -139,28 +150,27 @@ async def rollout_thought_sequence(
             supervisor_prompt = generate_supervisor_prompt(
                 task_prompt, thoughts=thought_trace
             )
-            output = await llm_generate(
-                client, supervisor_prompt, sampling_params_creative
-            )
+            output = await llm_generate(client, supervisor_prompt, params_creative)
             instruction = output.choices[0].message.content
         else:
             instruction = next_instructions
 
+        instruction = instruction.strip()
         instruction_trace.append(instruction)
         # print(f"Instruction: {instruction}\n\n")
 
         assistant_prompt = generate_assistant_prompt(
             task_prompt, instruction, thoughts=thought_trace
         )
-        output = await llm_generate(client, assistant_prompt, sampling_params_mild)
-        assistant_thought = output.choices[0].message.content
+        output = await llm_generate(client, assistant_prompt, params_mild)
+        assistant_thought = output.choices[0].message.content.strip()
         thought_trace.append(assistant_thought)
 
         # print(f"Thought: {assistant_thought}\n\n")
         check_completion_prompt = generate_check_completion_prompt(
             task_prompt, thoughts=thought_trace
         )
-        output = await llm_generate(client, check_completion_prompt, sampling_params)
+        output = await llm_generate(client, check_completion_prompt, params_strict)
         completion_status = output.choices[0].message.content
 
         match = re.search(
@@ -184,10 +194,10 @@ async def rollout_thought_sequence(
     return final_answer, thought_trace, instruction_trace
 
 
-class NodeType(Enum):
-    TASK_PROMPT = 1
-    INSTRUCTION = 2
-    THOUGHT = 3
+class NodeType(StrEnum):
+    TASK_PROMPT = "task_prompt"
+    INSTRUCTION = "instruction"
+    THOUGHT = "thought"
 
 
 class Node(NodeBase):
@@ -215,6 +225,29 @@ class Node(NodeBase):
                 instructions.append(ancestor.content)
         return task_prompt, instructions, thoughts
 
+    def dump(self, depth: Optional[int] = None) -> dict:
+        if depth is None or depth > 0:
+            children_list = [
+                child.dump(None if depth is None else depth - 1)
+                for child in self.children
+            ]
+        else:
+            children_list = None
+
+        node_dict = {
+            "visits": self.visits,
+            "value": self.value,
+            "score": self.value / self.visits,
+            "terminal": self.terminal,
+            "uct": self.uct,
+            "num_children": len(self.children),
+            "type": str(self.node_type),
+            "content": self.content,
+            "children": children_list,
+        }
+
+        return node_dict
+
 
 class MctsSearch(MctsParamsBase):
     def __init__(
@@ -223,17 +256,22 @@ class MctsSearch(MctsParamsBase):
         ground_truth: str,
         client: AsyncOpenAI,
         sampling_params: dict,
+        rollouts_filename: Optional[str] = None,
         max_depth: int = 10,
+        step_discount: float = 1.0,
     ):
         super().__init__()
+
+        self.tree_id = uuid4()
         self.task_prompt = task_prompt
         self.ground_truth = ground_truth
         self.client = client
         self.sampling_params = sampling_params
+        self.rollouts_filename = rollouts_filename
         self.max_depth = max_depth
+        self.step_discount = step_discount
 
         self.root = Node(NodeType.TASK_PROMPT, params=self)
-        self.root.visits = 1
         self.root.content = task_prompt
 
     def create_child(self, parent: Node) -> Node:
@@ -246,10 +284,13 @@ class MctsSearch(MctsParamsBase):
 
     async def step(self) -> None:
         node = self.root.select()
+        if node.terminal:
+            node.update(node.value)
+            return
+
         print(
             f"root {{ value: {self.root.value}, max_children: {self.root.max_children} }}; "
-            f"selected: depth={node.depth}, type={node.node_type}, visits={node.visits}, "
-            f"value={node.value}, uct={node.uct}, content={node.content}"
+            f"selected: depth={node.depth}, type={node.node_type}, visits={node.visits} "
         )
         task_prompt, instructions, thoughts = node.traces()
 
@@ -278,14 +319,40 @@ class MctsSearch(MctsParamsBase):
         # backprop
         if final_answer is not None and self.ground_truth in final_answer:
             node.update(1)
+            solved = True
         else:
             node.update(0)
+            solved = False
+
+        if self.rollouts_filename:
+            rollout_data = {
+                "solved": solved,
+                "start_depth": node.depth,
+                "tree_id": str(self.tree_id),
+                "final_answer": final_answer,
+                "task_prompt": self.task_prompt,
+                "thought_trace": thought_trace,
+                "instruction_trace": instruction_trace,
+            }
+            write_jsonl(self.rollouts_filename, lines=[rollout_data], mode="a")
+
+    def dump_tree(self, depth: Optional[int] = None) -> dict:
+        tree_dict = {
+            "id": str(self.tree_id),
+            "exploration_weight": self.exploration_weight,
+            "step_discount": self.step_discount,
+            "alpha": self.alpha,
+            "k": self.k,
+            "root": self.root.dump(depth),
+        }
+        return tree_dict
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--provider", type=str, default="DeepInfra")
+    parser.add_argument("--quantization", type=str, default=None)
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("--base_url", type=str, default="https://openrouter.ai/api/v1")
     parser.add_argument(
@@ -311,56 +378,78 @@ async def main():
         "model": args.model,
         "max_tokens": 4096,
     }
-    if args.provider is not None:
-        sampling_params["extra_body"] = {
-            "provider": {
-                "order": args.provider.split(","),
-                "allow_fallbacks": False,
-            },
-        }
 
-    # user_task_prompt = "43 + 1231 + 91 + 1 + 3 ="
-    user_task_prompt = "43 + 1231 + 91 + (1124 + 311) * -5 ="
-    # user_task_prompt = "Hello, how are you?"
-    # user_task_prompt = "Write a nice poem about adding numbers."
+    sampling_params["extra_body"] = {
+        "provider": {
+            "require_parameters": True,
+            "order": args.provider.split(","),
+            "allow_fallbacks": False,
+        },
+    }
+    if args.quantization:
+        sampling_params["extra_body"]["provider"]["quantizations"] = args.quantization
 
-    s = MctsSearch(
-        task_prompt=user_task_prompt,
-        ground_truth="-5810",
-        client=open_router_client,
-        sampling_params=sampling_params,
-        max_depth=8,
+    num_rollouts = 150
+    max_depth = 10
+    tree_dump_interval = 10
+
+    tasks = [
+        {
+            "id": "task_1",
+            "task_prompt": "43 + 1231 + 91 + (1124 + 311) * -75 =",
+            "ground_truth": "-106260",
+        },
+        {
+            "id": "task_2",
+            "task_prompt": "92183 * 192281 =",
+            "ground_truth": "17725039423",
+        },
+        {
+            "id": "task_3",
+            "task_prompt": "-(82194 + (19191+ 391+ 12+ 71)) =",
+            "ground_truth": "-101859",
+        },
+        # {
+        #     "id": "task_4",
+        #     "task_prompt": "-(972647*22368)-108 =",
+        #     "ground_truth": "-21756168204",
+        # },
+        # {
+        #     "id": "task_5",
+        #     "task_prompt": "8376194 + 192 - (1092841 * 2 + 891901) =",
+        #     "ground_truth": "5298803",
+        # },
+    ]
+
+    async def sample_and_write_result(id: str, task_prompt: str, ground_truth: str):
+        s = MctsSearch(
+            task_prompt=task_prompt,
+            ground_truth=ground_truth,
+            client=open_router_client,
+            sampling_params=sampling_params,
+            rollouts_filename=f"output/{id}_rollouts.jsonl",
+            max_depth=max_depth,
+            step_discount=0.95,
+        )
+
+        tree_filename = f"output/{id}_tree.json"
+        for i in range(num_rollouts):
+            try:
+                await s.step()
+                if (i + 1) % tree_dump_interval == 0:
+                    write_json(tree_filename, s.dump_tree())
+            except Exception as e:
+                print("Sampling failed:", e)
+                await asyncio.sleep(1.0)
+
+        write_json(tree_filename, s.dump_tree())
+
+    max_concurrent = args.max_concurrent
+    await process_queue(
+        (x for x in tasks),
+        worker_func=sample_and_write_result,
+        max_concurrent=max_concurrent,
     )
-    for i in range(100):
-        await s.step()
-
-    # async def sample_and_write_result(i: int):
-    #     final_answer, thought_trace, instruction_trace = (
-    #         await generate_thought_sequence(
-    #             user_task_prompt, open_router_client, sampling_params, max_depth=8
-    #         )
-    #     )
-    #     solved = False
-    #     if final_answer:
-    #         solved = any(x in final_answer for x in gt)
-
-    #     data = {
-    #         "solved": solved,
-    #         "final_answer": final_answer,
-    #         "user_task_prompt": user_task_prompt,
-    #         "thought_trace": thought_trace,
-    #         "instruction_trace": instruction_trace,
-    #     }
-    #     print(data)
-    #     # write_jsonl(args.output_jsonl, lines=[data], mode="a")
-    #     # print(f'{i}: solved={solved}, final_answer: {final_answer}')
-
-    # max_concurrent = args.max_concurrent
-    # await process_queue(
-    #     ({"i": i} for i in range(1)),
-    #     worker_func=sample_and_write_result,
-    #     max_concurrent=max_concurrent,
-    # )
 
 
 if __name__ == "__main__":

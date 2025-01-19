@@ -6,6 +6,7 @@ import math
 class MctsParamsBase(ABC):
     def __init__(self):
         self.exploration_weight = 1.0
+        self.step_discount = 1.0
 
         # progressive widening parameters
         self.alpha = 0.5
@@ -40,7 +41,7 @@ class NodeBase:
 
     @property
     def uct(self) -> float:
-        if self.visits == 0: 
+        if self.visits == 0 or self.parent is None:
             return self.value
         exploration_weight = self.params.exploration_weight
         return (self.value / self.visits) + exploration_weight * math.sqrt(
@@ -51,7 +52,7 @@ class NodeBase:
         self.value += reward
         self.visits += 1
         if self.parent is not None:
-            self.parent.update(reward)
+            self.parent.update(reward * self.params.step_discount)
 
     def select(self) -> Self:
         if self.terminal or self.visits == 0:
