@@ -130,11 +130,11 @@ async def rollout_thought_sequence(
     )
 
     params_creative = add_temperature_setting(
-        sampling_params, temperature=0.7, top_p=0.9
+        sampling_params, temperature=1.0, top_p=1.0
     )
-    params_mild = add_temperature_setting(sampling_params, temperature=0.1, top_p=0.95)
+    params_mild = add_temperature_setting(sampling_params, temperature=0.2, top_p=0.5)
     params_strict = add_temperature_setting(
-        sampling_params, temperature=0.05, top_p=0.99
+        sampling_params, temperature=0.05, top_p=0.1
     )
 
     start_depth = len(thought_trace)
