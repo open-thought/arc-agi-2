@@ -57,7 +57,7 @@ class NodeBase:
             self.parent.update(reward * self.params.step_discount)
 
     def select(self) -> Self:
-        if self.terminal or self.visits == 0:
+        if self.terminal or (self.visits == 0 and self.parent is not None):
             return self
         node = self.get_or_create_child()
         return node.select()

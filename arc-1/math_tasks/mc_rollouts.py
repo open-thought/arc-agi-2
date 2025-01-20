@@ -18,9 +18,9 @@ Previous assistant thoughts (if any):
 <thoughts>{1}</thoughts>
 
 Instructions:
-- Break down remaining work into small, manageable tasks
+- Break down remaining work into small, atomic tasks
 - Consider dependencies and optimal task ordering
-- Provide clear, short instructions for the next logical step
+- Provide clear, specific instructions for the next logical step
 
 Based on the current state, provide the next instruction. Just generate the message for the assistant."""
 
@@ -38,7 +38,7 @@ Generate a single <continue/>, <verify> or <output> tag.
 """
 
 assistant_developer_prompt = """You are a capable assistant focused on methodically processing user requests. Your goal is to execute the currrent instruction thoughtfully.
-You don't have a calculator tool, compute manually step-by-step."""
+You don't have access to a calculator or web-search."""
 assistant_prompt_template = """<user_request>{0}</user_request>
 
 Progress notes:
@@ -47,8 +47,8 @@ Progress notes:
 Current instruction:
 <instruction>{2}</instruction>
 
-Focus on clear, actionable results.
-Your answer text will automatically become a new thought item. Think the next logical step!
+Focus on clear, actionable results, don't hallucinate. What is your single next immediate atomic thought?
+Your answer text will automatically become a new thought item.
 """
 
 

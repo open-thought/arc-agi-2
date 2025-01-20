@@ -238,7 +238,7 @@ class Node(NodeBase):
         node_dict = {
             "visits": self.visits,
             "value": self.value,
-            "score": self.value / self.visits,
+            "score": self.value / self.visits if self.visits > 0 else None,
             "terminal": self.terminal,
             "uct": self.uct,
             "num_children": len(self.children),
@@ -290,7 +290,7 @@ class MctsSearch(MctsParamsBase):
             return
 
         print(
-            f"[{self.tree_id}] value: {self.root.value}, visits={self.root.visits}, root_children: {self.root.max_children}"
+            f"[{self.tree_id}] value: {self.root.value}, visits={self.root.visits}, root_children: {len(self.root.children)}"
         )
         task_prompt, instructions, thoughts = node.traces()
 
