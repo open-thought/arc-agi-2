@@ -9,34 +9,20 @@ from litellm import AsyncOpenAI
 from utils import write_jsonl, process_queue, llm_generate
 
 
-supervisor_developer_prompt = "You are the supervisor of an apprentice assistant. You provide instructions and guidance to help them fulfill user requests efficiently and successfully. No tools like calculator or web-search are available."
+supervisor_developer_prompt = """You are the supervisor of an apprentice assistant. You provide instructions and guidance to help them fulfill user requests efficiently and successfully.
+No tools like calculator or web-search are available."""
+
 supervisor_prompt_template = """<user_request>{0}</user_request>
 
 Previous assistant thoughts (if any):
 <thoughts>{1}</thoughts>
 
 Instructions:
-- Break down remaining work into small, atomic tasks
+- Break down remaining work into small, manageable tasks
 - Consider dependencies and optimal task ordering
-- Provide clear, specific instructions for the next logical step
+- Provide clear, short instructions for the next logical step
 
 Based on the current state, provide the next instruction. Just generate the message for the assistant."""
-
-
-assistant_developer_prompt = """You are a capable assistant focused on methodically processing user requests. Your goal is to execute the currrent instruction thoughtfully.
-You don't have access to a calculator or web-search."""
-assistant_prompt_template = """<user_request>{0}</user_request>
-
-Progress notes:
-<thoughts>{1}</thoughts>
-
-Current instruction:
-<instruction>{2}</instruction>
-
-Focus on clear, actionable results, don't hallucinate. What is your single next immediate atomic thought?
-Your answer text will automatically become a new thought item. Don't generate thought-tags, only the content.
-"""
-
 
 check_completion_template = """<user_request>{0}</user_request>
 
@@ -49,6 +35,20 @@ Classify the assistant's thoughts:
 - When the last thought contains a correct final answer, extract and copy it verbatim into an <output> tag.
 
 Generate a single <continue/>, <verify> or <output> tag.
+"""
+
+assistant_developer_prompt = """You are a capable assistant focused on methodically processing user requests. Your goal is to execute the currrent instruction thoughtfully.
+You don't have a calculator tool, compute manually step-by-step."""
+assistant_prompt_template = """<user_request>{0}</user_request>
+
+Progress notes:
+<thoughts>{1}</thoughts>
+
+Current instruction:
+<instruction>{2}</instruction>
+
+Focus on clear, actionable results.
+Your answer text will automatically become a new thought item. Think the next logical step!
 """
 
 
@@ -68,6 +68,7 @@ def generate_simple_request(user_prompt: str, developer_prompt: str) -> list[dic
 def format_thoughts(thoughts: list[str]) -> str:
     if not thoughts:
         return ""
+    #return f'\n{"\n".join([f"<thought id=\"{i}\">{t}</thought>" for i, t in enumerate(thoughts)])}\n'
     return f'\n{"\n\n".join(thoughts)}\n'
 
 
@@ -119,9 +120,9 @@ async def generate_thought_sequence(
     params_creative = add_temperature_setting(
         sampling_params, temperature=0.7, top_p=0.9
     )
-    params_mild = add_temperature_setting(sampling_params, temperature=0.1, top_p=0.95)
+    params_mild = add_temperature_setting(sampling_params, temperature=0.1, top_p=0.9)
     params_strict = add_temperature_setting(
-        sampling_params, temperature=0.05, top_p=0.99
+        sampling_params, temperature=0.2, top_p=0.1
     )
 
     final_answer = None
@@ -213,13 +214,13 @@ async def main():
         }
 
     # user_task_prompt = "43 + 1231 + 91 + 1 + 3 ="
-    user_task_prompt = "43 + 1231 + 91 + (1124 + 311) * -5 ="
-    gt = ["-5810"]
+    # user_task_prompt = "43 + 1231 + 91 + (1124 + 311) * -5 ="
+    # gt = ["-5810"]
 
     # user_task_prompt = "Hello, how are you?"
     # user_task_prompt = "Write a nice poem about adding numbers."
-    # user_task_prompt = "92183 * 192281 ="
-    # gt = ["17725039423", "17,725,039,423"]
+    user_task_prompt = "92183 * 192281 ="
+    gt = ["17725039423", "17,725,039,423"]
 
     async def sample_and_write_result(i: int):
         final_answer, thought_trace, instruction_trace = (

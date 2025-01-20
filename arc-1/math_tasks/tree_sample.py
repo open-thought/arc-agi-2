@@ -22,9 +22,9 @@ Previous assistant thoughts (if any):
 <thoughts>{1}</thoughts>
 
 Instructions:
-- Break down remaining work into small, atomic tasks
+- Break down remaining work into small, manageable tasks
 - Consider dependencies and optimal task ordering
-- Provide clear, specific instructions for the next logical step
+- Provide clear, short instructions for the next logical step
 
 Based on the current state, provide the next instruction. Just generate the message for the assistant."""
 
@@ -42,7 +42,7 @@ Generate a single <continue/>, <verify> or <output> tag.
 """
 
 assistant_developer_prompt = """You are a capable assistant focused on methodically processing user requests. Your goal is to execute the currrent instruction thoughtfully.
-You don't have access to a calculator or web-search."""
+You don't have a calculator tool, compute manually step-by-step."""
 assistant_prompt_template = """<user_request>{0}</user_request>
 
 Progress notes:
@@ -51,8 +51,8 @@ Progress notes:
 Current instruction:
 <instruction>{2}</instruction>
 
-Focus on clear, actionable results, don't hallucinate. What is your single next immediate atomic thought?
-Your answer text will automatically become a new thought item. Don't generate thought-tags, only the content.
+Focus on clear, actionable results.
+Your answer text will automatically become a new thought item. Think the next logical step!
 """
 
 
@@ -130,11 +130,11 @@ async def rollout_thought_sequence(
     )
 
     params_creative = add_temperature_setting(
-        sampling_params, temperature=1.0, top_p=1.0
+        sampling_params, temperature=0.7, top_p=0.9
     )
-    params_mild = add_temperature_setting(sampling_params, temperature=0.2, top_p=0.5)
+    params_mild = add_temperature_setting(sampling_params, temperature=0.1, top_p=0.9)
     params_strict = add_temperature_setting(
-        sampling_params, temperature=0.05, top_p=0.1
+        sampling_params, temperature=0.2, top_p=0.1
     )
 
     start_depth = len(thought_trace)
@@ -259,9 +259,10 @@ class MctsSearch(MctsParamsBase):
         sampling_params: dict,
         rollouts_filename: Optional[str] = None,
         max_depth: int = 10,
+        exploration_weight: float = 1.0,
         step_discount: float = 1.0,
     ):
-        super().__init__()
+        super().__init__(exploration_weight=exploration_weight, step_discount=step_discount)
 
         self.tree_id = uuid4()
         self.task_prompt = task_prompt
@@ -270,7 +271,6 @@ class MctsSearch(MctsParamsBase):
         self.sampling_params = sampling_params
         self.rollouts_filename = rollouts_filename
         self.max_depth = max_depth
-        self.step_discount = step_discount
 
         self.root = Node(NodeType.TASK_PROMPT, params=self)
         self.root.content = task_prompt
@@ -286,7 +286,7 @@ class MctsSearch(MctsParamsBase):
     async def step(self) -> None:
         node = self.root.select()
         if node.terminal:
-            node.update(node.value)
+            node.update(node.value/node.visits)
             return
 
         print(
@@ -358,6 +358,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model", type=str, default="meta-llama/llama-3.3-70b-instruct"
     )
+    parser.add_argument("--exploration", type=float, default=1.0, help="exploration weight")
     parser.add_argument("--max_concurrent", type=int, default=1)
     parser.add_argument("--output_path", type=str, default="./output/")
     parser.add_argument("--num_rollouts", type=int, default=10)
@@ -436,6 +437,7 @@ async def main():
             sampling_params=sampling_params,
             rollouts_filename=output_path / f"{id}_rollouts.jsonl",
             max_depth=max_depth,
+            exploration_weight=args.exploration,
             step_discount=0.95,
         )
 

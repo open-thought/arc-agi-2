@@ -4,13 +4,15 @@ import math
 
 
 class MctsParamsBase(ABC):
-    def __init__(self):
-        self.exploration_weight = 1.0
-        self.step_discount = 1.0
+    def __init__(self, exploration_weight: float = 1.0, step_discount: float = 1.0):
+        self.exploration_weight = exploration_weight  # 0.1 to 2.0 for most scenarios
+        # Chess engines often use lower values (0.1 - 0.5) to favor exploitation
+
+        self.step_discount = step_discount
 
         # progressive widening parameters
-        self.alpha = 0.5
-        self.k = 1
+        self.alpha = 0.5  # (typically around 0.4-0.8)
+        self.k = 1  # (typically around 1)
 
     @abstractmethod
     def create_child(self, parent: "NodeBase") -> "NodeBase":
