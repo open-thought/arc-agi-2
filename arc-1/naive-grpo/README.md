@@ -6,3 +6,4 @@ Goal: Working toy implementation of llama-3.2-3b locally RL training with GRPO. 
 ### Inspiration
 
 - [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF)
+- [Spinning Up in Deep RL](https://spinningup.openai.com/en/latest/)
