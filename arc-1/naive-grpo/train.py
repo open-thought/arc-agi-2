@@ -1,4 +1,4 @@
-from random import random
+import random
 import re
 from typing import Any
 import torch
@@ -74,6 +74,7 @@ def rollout(
     model_inputs["attention_mask"] = model_inputs["attention_mask"].repeat(
         num_rollouts, 1
     )
+
     input_ids = model_inputs["input_ids"].repeat(num_rollouts, 1)
     model_inputs["input_ids"] = input_ids
 
@@ -91,8 +92,8 @@ def rollout(
     )
 
     # 3. determine rewards
-    rewards = []
-    for completion in completions:
+    rewards = torch.zeros(num_rollouts, dtype=torch.float)
+    for i, completion in enumerate(completions):
         # search answer tag
         answer_match = re.search(
             r"<answer>(.*?)</answer>",
@@ -107,10 +108,12 @@ def rollout(
                 reward = 1
             elif oracle_answer in answer:
                 reward = 0.5
+            else:
+                reward = 0.01
 
-        rewards.append(reward)
+        rewards[i] = reward
 
-    return generated_ids, torch.tensor(rewards), completions
+    return generated_ids, rewards.to(generated_ids.device), completions
 
 
 def init_rng(seed: int) -> torch.Generator:
@@ -137,7 +140,12 @@ def main():
     print("rewards", rewards)
     print("advantage", advantage)
     
-    
+    attention_mask = generated_ids != tokenizer.eos_token_id
+    position_ids = attention_mask.long().cumsum(dim=-1) - 1
+    position_ids.masked_fill_(mask=(attention_mask == 0), value=1)
+    output = model.forward(input_ids=generated_ids, attention_mask=attention_mask, position_ids=position_ids)
+    logits = output["logits"]
+    print(logits.shape)
 
 
 if __name__ == "__main__":
