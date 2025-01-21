@@ -6,7 +6,7 @@ import re
 from typing import Optional
 
 from litellm import AsyncOpenAI
-from utils import write_jsonl, process_queue, llm_generate
+from utils import write_jsonl, process_queue, llm_generate, read_jsonl
 
 
 revision_agent_developer_prompt = """You are a stateful reasoning agent who iteratively progresses towards producing an excellent answer for given user requests. Your state is a thought trajectory which you can manipulate, e.g. by adding revising or deleting thoughts.
@@ -30,6 +30,9 @@ Break complex tasks recursively into manageable atomic thoughts, work logically 
 
 Consider the user_request and the existing thoughts in the reasoning trajectory. Don't repeat existing thoughts, just generate a single next command tag."""
 
+revision_check_prompt = """Do you see a thought that should be revised or deleted?
+Check all thoughts for validity. If everything is fine respond with the word VALID."""
+
 
 simple_agent_developer_prompt = """You are reasoning agent who iteratively progresses towards producing an excellent answer for given user requests. Your state is a thought trajectory.
 You don't have access to tools like web-search, shell or calculator. Use your state to reason and compute step-by-step."""
@@ -39,16 +42,27 @@ simple_next_step_prompt_template = """<user_request>{0}</user_request>
 ## Reasoning Trajectory
 <thoughts>{1}</thoughts>
 
-## Available Commands
+## Commands
 
 - `<thought>{{thought}}</thought>`  add a new thought
 - `<final_answer>{{output}}</final_answer>`  submit your answer when reasoning concluded
 
 Note: {{thought}} and {{output}} are placeholders.
 
-Break complex tasks recursively into manageable atomic thoughts, work logically step-by-step towards a solution. Generate a final answer when you feel confident about the result, otherwise revise or backtrack. Look for style hints in the user request when formulating the final answer.
+Break complex tasks recursively into manageable atomic thoughts, work logically step-by-step towards a solution. Once you are confident you have the result generate the final answer, look for style hints in the user request.
 
 Consider the user_request and the existing thoughts in the reasoning trajectory. Don't repeat existing thoughts, just generate a single next command tag."""
+
+
+basic_developer_prompt = """Breakdown the question into steps. First, do a task breakdown and then complete each step one at a time.
+The final answer does not need to be resolved in a single turn, but once you are confident you have the answer return it in an <answer>{{your_answer_here}}</answer> tag.
+"""
+
+basic_next_step_template = """Question: {0}
+
+Here are your previous steps:
+{1}
+"""
 
 
 def generate_simple_request(user_prompt: str, developer_prompt: str) -> list[dict]:
@@ -95,6 +109,35 @@ def parseInt(value) -> Optional[int]:
         return int(value)
     except ValueError:
         return None
+
+
+async def generate_thought_sequence_basic(
+    task_prompt: str, client: AsyncOpenAI, sampling_params: dict, max_depth: int = 10
+) -> None:
+    steps = []
+    final_answer = None
+    for i in range(max_depth):
+        if len(steps) > 0:
+            steps_formatted = "\n".join(steps)
+        else:
+            steps_formatted = "(None so far)"
+
+        step_prompt = basic_next_step_template.format(task_prompt, steps_formatted)
+        step_request = generate_simple_request(step_prompt, basic_developer_prompt)
+
+        output = await llm_generate(client, step_request, sampling_params)
+        output_text = output.choices[0].message.content
+        steps.append(output_text)
+
+        answer_match = re.search(
+            r"<answer>(.*?)</answer>", output_text, flags=re.DOTALL
+        )
+        if answer_match:
+            final_answer = answer_match.group(1)
+            # print(f"ANSWER: {final_answer}\n")
+            break
+
+    return final_answer, steps
 
 
 async def generate_thought_sequence_simple(
@@ -154,13 +197,7 @@ async def generate_thought_sequence_revision(
                     "content": output_text,
                 }
             )
-            step_prompt.append(
-                {
-                    "role": "user",
-                    "content": """Do you see a thought that should be revised or deleted?
-Check all thoughts for validity. If everything is fine respond with the word VALID.""",
-                }
-            )
+            step_prompt.append({"role": "user", "content": revision_check_prompt})
 
         output = await llm_generate(client, step_prompt, sampling_params)
         output_text = output.choices[0].message.content
@@ -229,7 +266,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_depth", type=int, default=20)
     parser.add_argument("--num_tries", type=int, default=10)
     parser.add_argument(
-        "--method", type=str, default="simple", help="either 'simple' or 'revision'"
+        "--method",
+        type=str,
+        default="simple",
+        help="'basic', 'simple' or 'revision'",
+    )
+    parser.add_argument(
+        "--tasks",
+        type=str,
+        default="math_tasks.jsonl",
+        help="path to tasks jsonl, default: math_tasks.jsonl",
     )
     args = parser.parse_args()
     return args
@@ -257,54 +303,50 @@ async def main():
             },
         }
 
-    # sampling_params = add_temperature_setting(
-    #     sampling_params, temperature=0.8, top_p=0.9
-    # )
+    sampling_params = add_temperature_setting(sampling_params, 0.7, 0.9)
 
-    # user_task_prompt = "43 + 1231 + 91 + 1 + 3 ="
-    # user_task_prompt = "43 + 1231 + 91 + (1124 + 311) * -5 ="
-    # gt = ["-5810"]
-
-    # user_task_prompt = "Hello, how are you?"
-    # user_task_prompt = "Write a nice poem about adding numbers."
-    user_task_prompt = "92183 * 192281 ="
-    gt = ["17725039423", "17,725,039,423"]
-
-    assert args.method in ("simple", "revision")
     print(f"Method: {args.method}")
-    if args.method == "simple":
-        thought_generator = generate_thought_sequence_simple
+    match args.method:
+        case "basic":
+            thought_generator = generate_thought_sequence_basic
+        case "simple":
+            thought_generator = generate_thought_sequence_simple
+        case "revision":
+            thought_generator = generate_thought_sequence_revision
+        case _:
+            raise RuntimeError("Unsupported method")
 
-    elif args.method == "revision":
-        thought_generator = generate_thought_sequence_revision
-    else:
-        raise RuntimeError("Unsupported method")
-
-    async def sample_and_write_result(i: int):
+    async def sample_and_write_result(
+        id: str, question: str, answer: str, num_terms: int, num_digits: int
+    ):
         final_answer, thought_trace = await thought_generator(
-            user_task_prompt,
+            question,
             open_router_client,
             sampling_params,
             max_depth=args.max_depth,
         )
         solved = False
-        if final_answer:
-            solved = any(x in final_answer for x in gt)
+        if final_answer == answer:
+            solved = True
 
         data = {
+            "id": id,
+            "num_terms": num_terms,
+            "num_digits": num_digits,
             "solved": solved,
             "final_answer": final_answer,
-            "user_task_prompt": user_task_prompt,
+            "ground_truth": answer,
+            "prompt": question,
             "thought_trace": thought_trace,
         }
         write_jsonl(args.output_jsonl, lines=[data], mode="a")
         print(
-            f"{i}: solved={solved}, final_answer: {final_answer}, num_thoughts={len(thought_trace)}"
+            f"{id}: solved={solved}, final_answer: {final_answer}, num_thoughts={len(thought_trace)}"
         )
 
     max_concurrent = args.max_concurrent
     await process_queue(
-        ({"i": i} for i in range(args.num_tries)),
+        read_jsonl(args.tasks),
         worker_func=sample_and_write_result,
         max_concurrent=max_concurrent,
     )
