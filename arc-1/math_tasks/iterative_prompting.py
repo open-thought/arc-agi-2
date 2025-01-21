@@ -319,30 +319,38 @@ async def main():
     async def sample_and_write_result(
         id: str, question: str, answer: str, num_terms: int, num_digits: int
     ):
-        final_answer, thought_trace = await thought_generator(
-            question,
-            open_router_client,
-            sampling_params,
-            max_depth=args.max_depth,
-        )
-        solved = False
-        if final_answer == answer:
-            solved = True
+        solved: Optional[bool] = None
+        for i in range(4):
+            try:
+                final_answer, thought_trace = await thought_generator(
+                    question,
+                    open_router_client,
+                    sampling_params,
+                    max_depth=args.max_depth,
+                )
+                solved = False
+                if final_answer == answer:
+                    solved = True
+                break
+            except Exception as e:
+                print(f"{id} Sampling failed ({i}): ", e)
+                await asyncio.sleep(i*i)
 
-        data = {
-            "id": id,
-            "num_terms": num_terms,
-            "num_digits": num_digits,
-            "solved": solved,
-            "final_answer": final_answer,
-            "ground_truth": answer,
-            "prompt": question,
-            "thought_trace": thought_trace,
-        }
-        write_jsonl(args.output_jsonl, lines=[data], mode="a")
-        print(
-            f"{id}: solved={solved}, final_answer: {final_answer}, num_thoughts={len(thought_trace)}"
-        )
+        if solved is not None:
+            data = {
+                "id": id,
+                "num_terms": num_terms,
+                "num_digits": num_digits,
+                "solved": solved,
+                "final_answer": final_answer,
+                "ground_truth": answer,
+                "prompt": question,
+                "thought_trace": thought_trace,
+            }
+            write_jsonl(args.output_jsonl, lines=[data], mode="a")
+            print(
+                f"{id}: solved={solved}, final_answer: {final_answer}, num_thoughts={len(thought_trace)}"
+            )
 
     max_concurrent = args.max_concurrent
     await process_queue(
