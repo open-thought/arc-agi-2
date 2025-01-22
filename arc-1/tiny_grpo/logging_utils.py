@@ -1,4 +1,4 @@
-# Adapted from from https://github.com/OpenRLHF/OpenRLHF/blob/main/openrlhf/utils/logging_utils.py
+# Adapted from https://github.com/OpenRLHF/OpenRLHF/blob/main/openrlhf/utils/logging_utils.py
 import logging
 import sys
 
