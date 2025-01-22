@@ -8,7 +8,7 @@ import re
 from typing import Optional, Self
 from uuid import uuid4
 
-from litellm import AsyncOpenAI
+from openai import AsyncOpenAI
 from utils import write_json, write_jsonl, process_queue, llm_generate
 from mcts import NodeBase, MctsParamsBase
 

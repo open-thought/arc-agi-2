@@ -5,7 +5,7 @@ from random import Random
 import re
 from typing import Optional
 
-from litellm import AsyncOpenAI
+from openai import AsyncOpenAI
 from utils import write_jsonl, process_queue, llm_generate
 
 

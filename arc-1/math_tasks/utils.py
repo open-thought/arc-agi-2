@@ -2,7 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
-from litellm import AsyncOpenAI
+from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 
 
