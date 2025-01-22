@@ -1,4 +1,4 @@
-# Naive implementation of GRPO
+# Minimal GRPO implementation
 
 Goal: Working toy implementation of llama-3.2-3b locally RL training with GRPO. Understanding the algorithm & hyper parameters. Just running everything locally on a single node.
 
