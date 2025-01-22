@@ -5,6 +5,7 @@ from typing import Any, Optional
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 from transformers import (
     AutoTokenizer,
@@ -193,6 +194,7 @@ def main():
     group_size: int = 8
     rollouts_per_step: int = 8
     epochs_per_step: int = 3
+    max_norm = 1.0
 
     device = torch.device("cuda", device_index)
     init_rng(seed)
@@ -205,7 +207,7 @@ def main():
 
     prompts = read_prompts(
         "data/math_tasks.jsonl",
-        predicate=lambda x: x["num_terms"] <= 3 and x["num_digits"] <= 4,
+        predicate=lambda x: x["num_terms"] <= 3 and x["num_digits"] <= 3,
         max_rows=1024,
     )
     logger.info(f"found {len(prompts)} matching prompts")
@@ -269,7 +271,7 @@ def main():
                 )
             replay_buffer.append(experience)
 
-        logger.info(f"returns of step {k}: {torch.stack(rollout_returns).sum()}")
+        logger.info(f"returns of step {k}: {torch.stack(rollout_returns).sum():.4f}")
 
         experience_sampler = DataLoader(
             replay_buffer,
@@ -293,9 +295,10 @@ def main():
                 )
 
                 loss, kl = objective(log_probs=log_probs, experience=exp)
-                logger.info(f"{step_epoch}: loss={loss:.4f}, kl={kl:.4f}")
-
                 loss.backward()
+                grad_norm = clip_grad_norm_(model.parameters(), max_norm=max_norm)
+                logger.info(f"{step_epoch}: loss={loss: .4f}, kl={kl: .4f}, grad_norm={grad_norm: .4f}")
+
                 optimizer.step()
 
 
