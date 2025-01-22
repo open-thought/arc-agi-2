@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from pathlib import Path
 import random
 import re
 from typing import Any, Optional
@@ -192,6 +193,8 @@ def main():
     wandb_project = None # "tiny_grpo"
     device_index = 0
     model_name = "meta-llama/Llama-3.2-1B-Instruct"
+    checkpoint_path = Path("./output")
+    checkpoint_interval = 20
     train_batch_size = 16
     lr = 5e-6
     kl_weight = 0.01
@@ -215,7 +218,10 @@ def main():
     model, tokenizer = load_model(model_name, device_map=device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    reference_model.eval()
+    model.gradient_checkpointing_enable(
+        gradient_checkpointing_kwargs={"use_reentrant": False}
+    )
 
     pad_token_id = tokenizer.eos_token_id
 
@@ -224,7 +230,7 @@ def main():
         predicate=lambda x: len(x["question"]) < 128
         and x["num_terms"] <= 3
         and x["num_digits"] <= 3,
-        max_rows=1024,
+        max_rows=64 * 1024,
     )
     logger.info(f"found {len(prompts)} matching prompts")
     prompt_loader = DataLoader(
@@ -340,6 +346,16 @@ def main():
                 wandb.log({"kl": kl, "grad_norm": grad_norm})
 
                 optimizer.step()
+
+        if (
+            checkpoint_path is not None
+            and checkpoint_interval is not None
+            and (k + 1) % checkpoint_interval == 0
+        ):
+            model.save_pretrained(checkpoint_path / f"step_{k}")
+
+    if checkpoint_path is not None:
+        model.save_pretrained(checkpoint_path / f"step_{k}")
 
 
 if __name__ == "__main__":
