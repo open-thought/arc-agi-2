@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, fields
+from typing import Optional, Self
 
 import torch
 import torch.nn.functional as F
@@ -28,6 +28,15 @@ class Experience:
     attention_mask: Optional[torch.Tensor]
     action_mask: torch.Tensor
     kl: Optional[torch.Tensor] = None
+
+    def to(self, device: torch.device) -> Self:
+        members = {}
+        for field in fields(self):
+            v = getattr(self, field.name)
+            if isinstance(v, torch.Tensor):
+                v = v.to(device=device)
+            members[field.name] = v
+        return Experience(**members)
 
 
 def split_experience_batch(experience: Experience) -> list[Experience]:

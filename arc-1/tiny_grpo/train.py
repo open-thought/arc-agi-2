@@ -54,6 +54,9 @@ def rollout(
     task: str,
     oracle_answer: str,
     num_rollouts: int,
+    max_length: int = 1024,
+    temperature: float = 1.0,
+    top_p: float = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
 
     model.eval()
@@ -92,9 +95,9 @@ def rollout(
     pad_token_id = tokenizer.eos_token_id
     generation_config = GenerationConfig(
         do_sample=True,
-        top_p=1.0,
-        temperature=1.0,
-        max_length=1024,
+        top_p=top_p,
+        temperature=temperature,
+        max_length=max_length,
         pad_token_id=pad_token_id,
     )
     sequence_ids = model.generate(**model_inputs, generation_config=generation_config)
@@ -186,17 +189,23 @@ def main():
     seed = 42
     device_index = 0
     model_name = "meta-llama/Llama-3.2-1B-Instruct"
-    batch_size = 8
-    lr = 1e-5
+    train_batch_size = 128
+    lr = 5e-6
     kl_weight = 0.01
     clip_eps = 0.2
 
-    group_size: int = 8
-    rollouts_per_step: int = 8
-    epochs_per_step: int = 3
-    max_norm = 1.0
+    group_size = 16
+    rollouts_per_step = 32
+    epochs_per_step = 3
+    max_norm = 1.0  # gradient clipping
+
+    # rollout params
+    max_length = 1024
+    top_p = 1.0
+    temperature = 1.0
 
     device = torch.device("cuda", device_index)
+    cpu_device = torch.device("cpu")
     init_rng(seed)
 
     reference_model, _ = load_model(model_name, device_map=device)
@@ -230,19 +239,27 @@ def main():
         questions = prompt_batch["question"]
         answers = prompt_batch["answer"]
 
-        for q, a in zip(questions, answers):
-            sequence_ids, returns, action_mask, completions = rollout(
-                model, tokenizer, q, a, num_rollouts=group_size
-            )
-            logger.info(
-                f"rollout q='{q}', a='{a}', returns={returns.sum().item():.2f}, replay_buffer_size={len(replay_buffer)}"
-            )
-            rollout_returns.append(returns)
+        with torch.no_grad():
+            for q, a in zip(questions, answers):
+                sequence_ids, returns, action_mask, completions = rollout(
+                    model,
+                    tokenizer,
+                    q,
+                    a,
+                    num_rollouts=group_size,
+                    max_length=max_length,
+                    temperature=temperature,
+                    top_p=top_p,
+                )
 
-            advantages = group_advantages(returns)
-            attention_mask = sequence_ids != pad_token_id
+                logger.info(
+                    f"rollout q='{q}', a='{a}', returns={returns.sum().item():.2f}, replay_buffer_size={len(replay_buffer)}"
+                )
+                rollout_returns.append(returns)
 
-            with torch.no_grad():
+                advantages = group_advantages(returns)
+                attention_mask = sequence_ids != pad_token_id
+
                 log_probs = sequences_log_probs(
                     model=model,
                     sequence_ids=sequence_ids,
@@ -269,13 +286,13 @@ def main():
                     action_mask=action_mask,
                     kl=kl,
                 )
-            replay_buffer.append(experience)
+            replay_buffer.append(experience.to(cpu_device))
 
         logger.info(f"returns of step {k}: {torch.stack(rollout_returns).sum():.4f}")
 
         experience_sampler = DataLoader(
             replay_buffer,
-            batch_size=batch_size,
+            batch_size=train_batch_size,
             shuffle=True,
             drop_last=True,
             pin_memory=True,
@@ -288,6 +305,8 @@ def main():
             for exp in experience_sampler:
                 exp: Experience
 
+                exp = exp.to(device)
+
                 optimizer.zero_grad()
 
                 log_probs = sequences_log_probs(
@@ -295,9 +314,14 @@ def main():
                 )
 
                 loss, kl = objective(log_probs=log_probs, experience=exp)
+
+                if not loss.isfinite():
+                    logger.warning(f"Loss not finite, skipping backward, loss={loss}")
+                    continue
+
                 loss.backward()
                 grad_norm = clip_grad_norm_(model.parameters(), max_norm=max_norm)
-                logger.info(f"{step_epoch}: loss={loss: .4f}, kl={kl: .4f}, grad_norm={grad_norm: .4f}")
+                logger.info(f"{step_epoch}: kl={kl: .4f}, grad_norm={grad_norm: .4f}")
 
                 optimizer.step()
 
