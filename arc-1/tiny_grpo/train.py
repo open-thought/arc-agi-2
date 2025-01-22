@@ -12,7 +12,7 @@ from transformers import (
     LlamaForCausalLM,
     GenerationConfig,
 )
-from objective import approx_kl_divergence, GRPOLoss
+from loss import approx_kl_divergence, GRPOLoss
 from replay_buffer import ReplayBuffer, Experience, join_experience_batch
 from logging_utils import init_logger
 from utils import read_jsonl
