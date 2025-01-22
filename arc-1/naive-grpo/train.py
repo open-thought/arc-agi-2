@@ -1,7 +1,8 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 import random
 import re
-from typing import Optional
+from typing import Any, Optional
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
@@ -13,6 +14,7 @@ from transformers import (
     GenerationConfig,
 )
 from logging_utils import init_logger
+from utils import read_jsonl
 
 
 logger = init_logger(__name__)
@@ -288,6 +290,20 @@ def sequences_log_probs(
     return log_probs
 
 
+def read_prompts(
+    file_name: str,
+    predicate: Optional[Callable[[Any], bool]] = None,
+    max_rows: Optional[int] = None,
+) -> list:
+    rows = []
+    for x in read_jsonl(file_name):
+        if predicate is None or predicate(x):
+            rows.append(x)
+        if max_rows is not None and len(rows) >= max_rows:
+            break
+    return rows
+
+
 def main():
     seed = 42
     device_index = 0
@@ -311,16 +327,36 @@ def main():
 
     pad_token_id = tokenizer.eos_token_id
 
+    prompts = read_prompts(
+        "data/math_tasks.jsonl",
+        predicate=lambda x: x["num_terms"] <= 3 and x["num_digits"] <= 4,
+        #max_rows=1024,
+    )
+    print(f"found {len(prompts)} matching prompts")
+    prompt_loader = DataLoader(
+        prompts,
+        batch_size=rollouts_per_step,
+        shuffle=True,
+        drop_last=True,
+        pin_memory=False,
+    )
+
     replay_buffer = ReplayBuffer()
 
-    for k in range(total_steps):
+    for k, prompt_batch in enumerate(prompt_loader):
+        rollout_returns = []
+
         replay_buffer.clear()
 
-        rollout_returns = []
-        for step_epoch in range(rollouts_per_step):
-            print("rollout", step_epoch)
+        questions = prompt_batch["question"]
+        answers = prompt_batch["answer"]
+
+        for q, a in zip(questions, answers):
             sequence_ids, returns, action_mask, completions = rollout(
-                model, tokenizer, "3 + 4 * 12 = ", "51", num_rollouts=group_size
+                model, tokenizer, q, a, num_rollouts=group_size
+            )
+            print(
+                f"rollout q='{q}', a='{a}', returns={returns.sum().item():.2f}, replay_buffer_size={len(replay_buffer)}"
             )
             rollout_returns.append(returns)
 
