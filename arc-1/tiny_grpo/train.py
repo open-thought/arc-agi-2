@@ -2,6 +2,7 @@ from collections.abc import Callable
 import random
 import re
 from typing import Any, Optional
+import wandb
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
@@ -162,6 +163,7 @@ def sequences_log_probs(
         input_ids=sequence_ids,
         attention_mask=attention_mask,
         position_ids=position_ids,
+        use_cache=False,
     )
     logits = output["logits"]
     log_probs = sequence_log_probs_from_logits(
@@ -187,14 +189,15 @@ def read_prompts(
 
 def main():
     seed = 42
+    wandb_project = None # "tiny_grpo"
     device_index = 0
     model_name = "meta-llama/Llama-3.2-1B-Instruct"
-    train_batch_size = 128
+    train_batch_size = 16
     lr = 5e-6
     kl_weight = 0.01
     clip_eps = 0.2
 
-    group_size = 16
+    group_size = 12
     rollouts_per_step = 32
     epochs_per_step = 1
     max_norm = 1.0  # gradient clipping
@@ -212,11 +215,15 @@ def main():
     model, tokenizer = load_model(model_name, device_map=device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+
     pad_token_id = tokenizer.eos_token_id
 
     prompts = read_prompts(
         "data/math_tasks.jsonl",
-        predicate=lambda x: x["num_terms"] <= 3 and x["num_digits"] <= 3,
+        predicate=lambda x: len(x["question"]) < 128
+        and x["num_terms"] <= 3
+        and x["num_digits"] <= 3,
         max_rows=1024,
     )
     logger.info(f"found {len(prompts)} matching prompts")
@@ -230,6 +237,11 @@ def main():
 
     replay_buffer = ReplayBuffer()
     objective = GRPOLoss(clip_eps=clip_eps, kl_weight=kl_weight)
+
+    if wandb_project is None:
+        wandb.init(mode="disabled")
+    else:
+        wandb.init(project=wandb_project)
 
     for k, prompt_batch in enumerate(prompt_loader):
         rollout_returns = []
@@ -253,9 +265,9 @@ def main():
                 )
 
                 logger.info(
-                    f"rollout q='{q}', a='{a}', returns={returns.sum().item():.2f}, replay_buffer_size={len(replay_buffer)}"
+                    f"rollout q='{q}', a='{a}', returns={returns.sum().item():.2f}, replay_buffer_size={len(replay_buffer)}, sequence_ids={sequence_ids.shape}"
                 )
-                rollout_returns.append(returns)
+                rollout_returns.append(returns.cpu())
 
                 advantages = group_advantages(returns)
                 attention_mask = sequence_ids != pad_token_id
@@ -278,24 +290,26 @@ def main():
 
                 experience = Experience(
                     sequences=sequence_ids,
-                    action_log_probs=log_probs.detach(),
+                    action_log_probs=log_probs,
                     log_probs_ref=log_probs_ref,
                     returns=returns,
-                    advantages=advantages.detach(),
+                    advantages=advantages,
                     attention_mask=attention_mask,
                     action_mask=action_mask,
                     kl=kl,
                 )
                 replay_buffer.append(experience.to(cpu_device))
 
-        logger.info(f"returns of step {k}: {torch.stack(rollout_returns).sum():.4f}")
+        torch.cuda.empty_cache()
+        episode_return_sum = torch.stack(rollout_returns).sum()
+        logger.info(f"returns of step {k}: {episode_return_sum:.4f}")
+        wandb.log({"returns": episode_return_sum})
 
         experience_sampler = DataLoader(
             replay_buffer,
             batch_size=train_batch_size,
             shuffle=True,
             drop_last=True,
-            pin_memory=True,
             collate_fn=join_experience_batch,
         )
 
@@ -323,6 +337,7 @@ def main():
                 loss.backward()
                 grad_norm = clip_grad_norm_(model.parameters(), max_norm=max_norm)
                 logger.info(f"{step_epoch}: kl={kl: .4f}, grad_norm={grad_norm: .4f}")
+                wandb.log({"kl": kl, "grad_norm": grad_norm})
 
                 optimizer.step()
 
