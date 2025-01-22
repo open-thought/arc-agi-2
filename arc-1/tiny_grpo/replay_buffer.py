@@ -89,10 +89,6 @@ class ReplayBuffer:
             if samples_to_remove > 0:
                 self.items = self.items[samples_to_remove:]
 
-    def sample(self, batch_size: int) -> Experience:
-        batch_items = random.sample(self.items, batch_size)
-        return join_experience_batch(batch_items)
-
     def clear(self) -> None:
         self.items.clear()
 
