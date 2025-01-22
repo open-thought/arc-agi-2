@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from dataclasses import dataclass
 import random
 import re
 from typing import Any, Optional
@@ -13,6 +12,8 @@ from transformers import (
     LlamaForCausalLM,
     GenerationConfig,
 )
+from objective import approx_kl_divergence, GRPOLoss
+from replay_buffer import ReplayBuffer, Experience, join_experience_batch
 from logging_utils import init_logger
 from utils import read_jsonl
 
@@ -135,130 +136,6 @@ def init_rng(seed: int) -> torch.Generator:
     return torch.manual_seed(seed)
 
 
-def masked_mean(
-    tensor: torch.Tensor,
-    mask: Optional[torch.Tensor],
-    dim: int = None,
-) -> torch.Tensor:
-    if mask is None:
-        return tensor.mean(axis=dim)
-    return (tensor * mask).sum(axis=dim) / mask.sum(axis=dim)
-
-
-def zero_pad_sequences(
-    sequences: list[torch.Tensor], side: str = "left"
-) -> torch.Tensor:
-    assert side in ("left", "right")
-    max_len = max(seq.size(0) for seq in sequences)
-    padded_sequences = []
-    for seq in sequences:
-        pad_len = max_len - seq.size(0)
-        padding = (pad_len, 0) if side == "left" else (0, pad_len)
-        padded_sequences.append(F.pad(seq, padding))
-    return torch.stack(padded_sequences, dim=0)
-
-
-@dataclass
-class Experience:
-    sequences: torch.Tensor
-    action_log_probs: torch.Tensor
-    log_probs_ref: torch.Tensor
-    returns: Optional[torch.Tensor]
-    advantages: Optional[torch.Tensor]
-    attention_mask: Optional[torch.Tensor]
-    action_mask: torch.Tensor
-    kl: Optional[torch.Tensor] = None
-
-
-def split_experience_batch(experience: Experience) -> list[Experience]:
-    batch_size = experience.sequences.size(0)
-    batch_data = [{} for _ in range(batch_size)]
-    keys = (
-        "sequences",
-        "action_log_probs",
-        "log_probs_ref",
-        "returns",
-        "advantages",
-        "attention_mask",
-        "action_mask",
-    )
-    for key in keys:
-        value = getattr(experience, key)
-        if value is None:
-            vals = [None] * batch_size
-        else:
-            vals = torch.unbind(value)
-        assert batch_size == len(vals)
-        for i, v in enumerate(vals):
-            batch_data[i][key] = v
-
-    return [Experience(**data) for data in batch_data]
-
-
-def join_experience_batch(items: list[Experience]) -> Experience:
-    batch_data = {}
-    keys = (
-        "sequences",
-        "action_log_probs",
-        "log_probs_ref",
-        "returns",
-        "advantages",
-        "attention_mask",
-        "action_mask",
-    )
-    for key in keys:
-        vals = [getattr(item, key) for item in items]
-        if all(v is not None for v in vals):
-            data = zero_pad_sequences(vals, "left")
-        else:
-            data = None
-        batch_data[key] = data
-    return Experience(**batch_data)
-
-
-class ReplayBuffer:
-    def __init__(self, limit: int = 0) -> None:
-        self.limit = limit
-        self.items: list[Experience] = []
-
-    def append(self, experience: Experience) -> None:
-        items = split_experience_batch(experience)
-        self.items.extend(items)
-        if self.limit > 0:
-            samples_to_remove = len(self.items) - self.limit
-            if samples_to_remove > 0:
-                self.items = self.items[samples_to_remove:]
-
-    def sample(self, batch_size: int) -> Experience:
-        batch_items = random.sample(self.items, batch_size)
-        return join_experience_batch(batch_items)
-
-    def clear(self) -> None:
-        self.items.clear()
-
-    def __len__(self) -> int:
-        return len(self.items)
-
-    def __getitem__(self, idx: int) -> Experience:
-        return self.items[idx]
-
-
-def approx_kl_divergence(
-    log_probs: torch.Tensor,
-    log_probs_ref: torch.Tensor,
-    action_mask: Optional[torch.Tensor],
-) -> torch.Tensor:
-    """
-    Monte-Carlo approximation of KL divergence, k3 estimator, see: http://joschu.net/blog/kl-approx.html
-    """
-
-    log_ratio = log_probs_ref.float() - log_probs.float()
-    if action_mask is not None:
-        log_ratio = log_ratio * action_mask
-
-    return log_ratio.exp() - log_ratio - 1
-
-
 def group_advantages(returns: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     return (returns - returns.mean()) / (returns.std() + eps)
 
@@ -311,12 +188,11 @@ def main():
     batch_size = 8
     lr = 1e-5
     kl_weight = 0.01
-    clip_eps: float = 0.2
+    clip_eps = 0.2
 
-    total_steps = 500
-    group_size = 8
-    rollouts_per_step = 128
-    epochs_per_step = 3
+    group_size: int = 8
+    rollouts_per_step: int = 8
+    epochs_per_step: int = 3
 
     device = torch.device("cuda", device_index)
     init_rng(seed)
@@ -330,7 +206,7 @@ def main():
     prompts = read_prompts(
         "data/math_tasks.jsonl",
         predicate=lambda x: x["num_terms"] <= 3 and x["num_digits"] <= 4,
-        #max_rows=1024,
+        max_rows=1024,
     )
     print(f"found {len(prompts)} matching prompts")
     prompt_loader = DataLoader(
@@ -342,6 +218,7 @@ def main():
     )
 
     replay_buffer = ReplayBuffer()
+    objective = GRPOLoss(clip_eps=clip_eps, kl_weight=kl_weight)
 
     for k, prompt_batch in enumerate(prompt_loader):
         rollout_returns = []
@@ -406,39 +283,17 @@ def main():
         for step_epoch in range(epochs_per_step):
             model.train()
 
-            for experience in experience_sampler:
-                experience: Experience
-
-                sequence_ids = experience.sequences
-                attention_mask = experience.attention_mask
-                advantages = experience.advantages
-                action_mask = experience.action_mask
-                old_log_probs = experience.action_log_probs
-                log_probs_ref = experience.log_probs_ref
-
-                position_ids = attention_mask.long().cumsum(dim=-1) - 1
-                position_ids.masked_fill_(mask=(attention_mask == 0), value=1)
+            for exp in experience_sampler:
+                exp: Experience
 
                 optimizer.zero_grad()
 
                 log_probs = sequences_log_probs(
-                    model, sequence_ids=sequence_ids, attention_mask=attention_mask
+                    model, sequence_ids=exp.sequences, attention_mask=exp.attention_mask
                 )
 
-                kl = approx_kl_divergence(
-                    log_probs=log_probs,
-                    log_probs_ref=log_probs_ref,
-                    action_mask=action_mask,
-                )
-
-                # GRPO actor loss
-                ratio = (log_probs - old_log_probs).exp()
-                surr1 = ratio * advantages
-                surr2 = ratio.clamp(1 - clip_eps, 1 + clip_eps) * advantages
-                loss = -torch.min(surr1, surr2) + kl_weight * kl
-
-                loss = masked_mean(loss, action_mask, dim=-1).mean()
-                print(f"{step_epoch}: loss={loss}, kl={kl.mean()}")
+                loss, kl = objective(log_probs=log_probs, experience=exp)
+                print(f"{step_epoch}: loss={loss}, kl={kl}")
 
                 loss.backward()
                 optimizer.step()
