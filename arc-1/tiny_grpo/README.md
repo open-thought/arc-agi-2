@@ -2,6 +2,27 @@
 
 Goal: Working toy implementation of llama-3.2-3b locally RL training with GRPO. Understanding the algorithm & hyper parameters. Just running everything locally on a single node.
 
+### Setup
+
+1. Create conda env
+
+```
+conda create --name grpo python=3.12 -y
+conda activate grpo
+```
+
+2. Install dependencies
+
+```
+pip install -r requirements.txt
+pip install flash-attn --no-build-isolation
+```
+
+3. Play with the source in `train.py`
+
+```
+python train.py
+```
 
 ### Inspiration
 

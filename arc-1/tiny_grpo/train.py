@@ -208,7 +208,7 @@ def main():
         predicate=lambda x: x["num_terms"] <= 3 and x["num_digits"] <= 4,
         max_rows=1024,
     )
-    print(f"found {len(prompts)} matching prompts")
+    logger.info(f"found {len(prompts)} matching prompts")
     prompt_loader = DataLoader(
         prompts,
         batch_size=rollouts_per_step,
@@ -232,7 +232,7 @@ def main():
             sequence_ids, returns, action_mask, completions = rollout(
                 model, tokenizer, q, a, num_rollouts=group_size
             )
-            print(
+            logger.info(
                 f"rollout q='{q}', a='{a}', returns={returns.sum().item():.2f}, replay_buffer_size={len(replay_buffer)}"
             )
             rollout_returns.append(returns)
@@ -269,7 +269,7 @@ def main():
                 )
             replay_buffer.append(experience)
 
-        print(f"returns of step {k}: {torch.stack(rollout_returns).sum()}")
+        logger.info(f"returns of step {k}: {torch.stack(rollout_returns).sum()}")
 
         experience_sampler = DataLoader(
             replay_buffer,
@@ -293,7 +293,7 @@ def main():
                 )
 
                 loss, kl = objective(log_probs=log_probs, experience=exp)
-                print(f"{step_epoch}: loss={loss}, kl={kl}")
+                logger.info(f"{step_epoch}: loss={loss:.4f}, kl={kl:.4f}")
 
                 loss.backward()
                 optimizer.step()
