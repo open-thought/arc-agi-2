@@ -118,11 +118,11 @@ def rollout(
         reward = 0
         if answer is not None:
             if answer == oracle_answer:
-                reward = 1
+                reward = 10.0
             elif oracle_answer in answer:
                 reward = 0.5
-            else:
-                reward = 0.01
+            # else:
+            #     reward = 0.01
 
         returns[i] = reward
 
@@ -168,6 +168,7 @@ def zero_pad_sequences(
 class Experience:
     sequences: torch.Tensor
     action_log_probs: torch.Tensor
+    log_probs_ref: torch.Tensor
     returns: Optional[torch.Tensor]
     advantages: Optional[torch.Tensor]
     attention_mask: Optional[torch.Tensor]
@@ -181,6 +182,7 @@ def split_experience_batch(experience: Experience) -> list[Experience]:
     keys = (
         "sequences",
         "action_log_probs",
+        "log_probs_ref",
         "returns",
         "advantages",
         "attention_mask",
@@ -204,6 +206,7 @@ def join_experience_batch(items: list[Experience]) -> Experience:
     keys = (
         "sequences",
         "action_log_probs",
+        "log_probs_ref",
         "returns",
         "advantages",
         "attention_mask",
@@ -246,107 +249,163 @@ class ReplayBuffer:
         return self.items[idx]
 
 
+def approx_kl_divergence(
+    log_probs: torch.Tensor,
+    log_probs_ref: torch.Tensor,
+    action_mask: Optional[torch.Tensor],
+) -> torch.Tensor:
+    """
+    Monte-Carlo approximation of KL divergence, k3 estimator, see: http://joschu.net/blog/kl-approx.html
+    """
+
+    log_ratio = log_probs_ref.float() - log_probs.float()
+    if action_mask is not None:
+        log_ratio = log_ratio * action_mask
+
+    return log_ratio.exp() - log_ratio - 1
+
+
 def main():
     seed = 42
     device_index = 0
     model_name = "meta-llama/Llama-3.2-1B-Instruct"
     batch_size = 8
+    beta = 0.01
 
     device = torch.device("cuda", device_index)
     init_rng(seed)
 
+    reference_model, _ = load_model(model_name, device_map=device)
     model, tokenizer = load_model(model_name, device_map=device)
 
     replay_buffer = ReplayBuffer(limit=128)
 
-    # dummy experience
-    sequence_ids, returns, action_mask, completions = rollout(
-        model, tokenizer, "3 + 4 * 12 = ", "51", num_rollouts=8
-    )
+    for k in range(10):
+        replay_buffer.clear()
 
-    eps = 1e-8
-    advantages = (returns - returns.mean()) / (returns.std() + eps)
+        rollout_returns = []
+        for i in range(2):
+            print("rollout", i)
+            # dummy experience
+            sequence_ids, returns, action_mask, completions = rollout(
+                model, tokenizer, "3 + 4 * 12 = ", "51", num_rollouts=8
+            )
 
-    print("completions", completions)
-    print("returns", returns)
-    print("advantage", advantages)
-    print("action_mask", action_mask)
+            eps = 1e-8
+            advantages = (returns - returns.mean()) / (returns.std() + eps)
+            rollout_returns.append(returns)
 
-    attention_mask = sequence_ids != tokenizer.eos_token_id
-    position_ids = attention_mask.long().cumsum(dim=-1) - 1
-    position_ids.masked_fill_(mask=(attention_mask == 0), value=1)
-    output = model.forward(
-        input_ids=sequence_ids,
-        attention_mask=attention_mask,
-        position_ids=position_ids,
-    )
-    logits = output["logits"]
+            #print("completions", completions)
+            
+            @torch.no_grad()
+            def get_log_probs_no_grad(
+                model: LlamaForCausalLM,
+                sequence_ids: torch.Tensor,
+                attention_mask: torch.Tensor,
+            ) -> torch.Tensor:
+                position_ids = attention_mask.long().cumsum(dim=-1) - 1
+                position_ids.masked_fill_(mask=(attention_mask == 0), value=1)
+                output = model.forward(
+                    input_ids=sequence_ids,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                )
+                logits = output["logits"]
+                log_probs = get_sequence_log_probs(
+                    logits=logits[:, :-1].to(torch.float32),
+                    output_ids=sequence_ids[:, 1:],
+                )
+                return log_probs
 
-    log_probs = get_sequence_log_probs(
-        logits=logits[:, :-1].to(torch.float32), output_ids=sequence_ids[:, 1:]
-    )
+            attention_mask = sequence_ids != tokenizer.eos_token_id
 
-    experience = Experience(
-        sequences=sequence_ids,
-        action_log_probs=log_probs.detach(),
-        returns=returns,
-        advantages=advantages.detach(),
-        attention_mask=attention_mask,
-        action_mask=action_mask,
-    )
-    replay_buffer.append(experience)
+            log_probs = get_log_probs_no_grad(
+                model=model, sequence_ids=sequence_ids, attention_mask=attention_mask
+            )
+            log_probs_ref = get_log_probs_no_grad(
+                model=reference_model, sequence_ids=sequence_ids, attention_mask=attention_mask
+            )
+            kl = approx_kl_divergence(
+                log_probs=log_probs, log_probs_ref=log_probs_ref, action_mask=action_mask
+            )
 
-    dataloader = DataLoader(
-        replay_buffer,
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=True,
-        pin_memory=True,
-        collate_fn=join_experience_batch,
-    )
-
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
-
-    for i in range(3):
-        model.train()
-
-        for experience in dataloader:
-            optimizer.zero_grad()
-
-            attention_mask = experience.attention_mask
-            position_ids = attention_mask.long().cumsum(dim=-1) - 1
-            position_ids.masked_fill_(mask=(attention_mask == 0), value=1)
-
-            output = model.forward(
-                input_ids=sequence_ids,
+            experience = Experience(
+                sequences=sequence_ids,
+                action_log_probs=log_probs.detach(),
+                log_probs_ref=log_probs_ref,
+                returns=returns,
+                advantages=advantages.detach(),
                 attention_mask=attention_mask,
-                position_ids=position_ids,
+                action_mask=action_mask,
+                kl=kl,
             )
+            replay_buffer.append(experience)
 
-            logits = output["logits"]
-            log_probs = get_sequence_log_probs(
-                logits=logits[:, :-1].to(torch.float32), output_ids=sequence_ids[:, 1:]
-            )
+        print(f"returns of step {k}: {torch.stack(rollout_returns).sum()}")
 
-            old_log_probs = experience.action_log_probs
-            advantages = experience.advantages
-            action_mask = experience.action_mask
-            clip_eps: float = 0.2
+        dataloader = DataLoader(
+            replay_buffer,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
+            pin_memory=True,
+            collate_fn=join_experience_batch,
+        )
 
-            # actor loss
-            ratio = (log_probs - old_log_probs).exp()
-            surr1 = ratio * advantages
-            surr2 = ratio.clamp(1 - clip_eps, 1 + clip_eps) * advantages
-            loss = -torch.min(surr1, surr2)
+        optimizer = optim.Adam(model.parameters(), lr=1e-5)
+        #optimizer = optim.SGD(model.parameters(), lr=1e-2)
 
-            # todo: add kl loss
+        for i in range(3):
+            model.train()
 
-            loss = masked_mean(loss, action_mask, dim=-1).mean()
-            print(i, "loss", loss)
+            for experience in dataloader:
+                experience: Experience
 
-            loss.backward()
+                sequence_ids = experience.sequences
+                attention_mask = experience.attention_mask
+                advantages = experience.advantages
+                action_mask = experience.action_mask
+                old_log_probs = experience.action_log_probs
+                log_probs_ref = experience.log_probs_ref
 
-            optimizer.step()
+                # print("returns", experience.returns)
+                #print("advantage", experience.advantages)
+                # print("action_mask", experience.action_mask)
+
+                position_ids = attention_mask.long().cumsum(dim=-1) - 1
+                position_ids.masked_fill_(mask=(attention_mask == 0), value=1)
+
+                optimizer.zero_grad()
+                output = model.forward(
+                    input_ids=sequence_ids,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                )
+
+                logits = output["logits"]
+                log_probs = get_sequence_log_probs(
+                    logits=logits[:, :-1].to(torch.float32), output_ids=sequence_ids[:, 1:]
+                )
+
+                kl = approx_kl_divergence(
+                    log_probs=log_probs,
+                    log_probs_ref=log_probs_ref,
+                    action_mask=action_mask,
+                )
+
+                clip_eps: float = 0.2
+
+                # actor loss
+                ratio = (log_probs - old_log_probs).exp()
+                surr1 = ratio * advantages
+                surr2 = ratio.clamp(1 - clip_eps, 1 + clip_eps) * advantages
+                loss = -torch.min(surr1, surr2) + beta * kl
+
+                loss = masked_mean(loss, action_mask, dim=-1).mean()
+                print(f"{i}: loss={loss}, kl={kl.mean()}")
+
+                loss.backward()
+                optimizer.step()
 
     print(log_probs)
 
