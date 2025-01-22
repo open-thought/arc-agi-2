@@ -196,7 +196,7 @@ def main():
 
     group_size = 16
     rollouts_per_step = 32
-    epochs_per_step = 3
+    epochs_per_step = 1
     max_norm = 1.0  # gradient clipping
 
     # rollout params
@@ -286,7 +286,7 @@ def main():
                     action_mask=action_mask,
                     kl=kl,
                 )
-            replay_buffer.append(experience.to(cpu_device))
+                replay_buffer.append(experience.to(cpu_device))
 
         logger.info(f"returns of step {k}: {torch.stack(rollout_returns).sum():.4f}")
 
@@ -317,6 +317,7 @@ def main():
 
                 if not loss.isfinite():
                     logger.warning(f"Loss not finite, skipping backward, loss={loss}")
+                    logger.warning("experience.advantages={experience.advantages}")
                     continue
 
                 loss.backward()
