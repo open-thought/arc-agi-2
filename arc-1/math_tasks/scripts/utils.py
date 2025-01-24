@@ -10,12 +10,15 @@ async def llm_generate(
     client: AsyncOpenAI,
     messages: Iterable[ChatCompletionMessageParam],
     sampling_params: dict[str, Any],
+    api_type: str,
 ) -> ChatCompletion:
     max_retry = 3
     for trial in range(max_retry):
         try:
+            # Add OpenRouter-specific headers only when using OpenRouter
+            headers = {"X-Title": "open-thought"} if api_type == "openrouter" else None
             return await client.chat.completions.create(
-                extra_headers={"X-Title": "open-thought"},
+                extra_headers=headers,
                 messages=messages,
                 **sampling_params,
             )

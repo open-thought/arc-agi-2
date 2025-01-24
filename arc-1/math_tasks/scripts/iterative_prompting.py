@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import os
+from pathlib import Path
 from random import Random
 import re
 from typing import Optional
@@ -254,29 +255,19 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--provider", type=str, default="DeepInfra")
+    parser.add_argument("--api_type", type=str, choices=["openrouter", "swissai"], default="openrouter", help="API service to use")
+    parser.add_argument("--api_key_env", type=str, default="OPENROUTER_API_KEY", help="Environment variable name containing the API key")
     parser.add_argument("--timeout", type=float, default=90.0)
-    parser.add_argument("--base_url", type=str, default="https://openrouter.ai/api/v1")
     parser.add_argument(
-        "--model", type=str, default="meta-llama/llama-3.3-70b-instruct"
+        "--model", type=str, default="meta-llama/llama-3.3-70b-instruct",
+        help="Model to use. For SwissAI, use meta-llama/Llama-3.3-70B-Instruct format. For OpenRouter, use meta-llama/llama-3.3-70b-instruct format."
     )
     parser.add_argument("--max_concurrent", type=int, default=1)
-    parser.add_argument(
-        "--output_jsonl", type=str, default="iterative_output_ll-3.3_70b.jsonl"
-    )
-    parser.add_argument("--max_depth", type=int, default=20)
+    parser.add_argument("--output_jsonl", type=str, default="iterative_output_ll-3.3-70b-instruct.jsonl")
     parser.add_argument("--num_tries", type=int, default=10)
-    parser.add_argument(
-        "--method",
-        type=str,
-        default="simple",
-        help="'basic', 'simple' or 'revision'",
-    )
-    parser.add_argument(
-        "--tasks",
-        type=str,
-        default="math_tasks.jsonl",
-        help="path to tasks jsonl, default: math_tasks.jsonl",
-    )
+    parser.add_argument("--method", type=str, choices=["basic", "simple", "revision"], default="simple")
+    parser.add_argument("--tasks", type=str, required=True, default="math_tasks.jsonl", help="path to tasks jsonl, default: math_tasks.jsonl")
+    parser.add_argument("--max_depth", type=int, default=20)
     args = parser.parse_args()
     return args
 
@@ -285,9 +276,26 @@ async def main():
     args = parse_args()
     rng = Random(args.seed)
 
-    open_router_client = AsyncOpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
+    try:
+        dir = Path(__file__).parent.parent
+    except:
+        dir = Path("..")
+    output_filename = str(dir / "data" / args.tasks)
+    Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
+    file_path = Path(output_filename)
+
+    if args.api_type == "swissai":
+        base_url = "https://fmapi.swissai.cscs.ch"
+        api_key_env = "SWISSAI_API_KEY"
+        if "llama-3.3-70b-instruct" in args.model.lower():
+            args.model = "meta-llama/Llama-3.3-70B-Instruct"  # SwissAI format
+    else:
+        base_url = "https://openrouter.ai/api/v1"
+        api_key_env = args.api_key_env
+
+    client = AsyncOpenAI(
+        base_url=base_url,
+        api_key=os.getenv(api_key_env),
         timeout=args.timeout,
     )
 
@@ -295,7 +303,8 @@ async def main():
         "model": args.model,
         "max_tokens": 4096,
     }
-    if args.provider is not None:
+    # Add OpenRouter-specific provider routing
+    if args.api_type == "openrouter" and args.provider is not None:
         sampling_params["extra_body"] = {
             "provider": {
                 "order": args.provider.split(","),
@@ -324,7 +333,7 @@ async def main():
             try:
                 final_answer, thought_trace = await thought_generator(
                     question,
-                    open_router_client,
+                    client,
                     sampling_params,
                     max_depth=args.max_depth,
                 )
@@ -333,7 +342,7 @@ async def main():
                     solved = True
                 break
             except Exception as e:
-                print(f"{id} Sampling failed ({i}): ", e)
+                print(f"{id}: iterative_prompting: Sampling failed ({i}): ", e)
                 await asyncio.sleep(i*i)
 
         if solved is not None:
@@ -354,7 +363,7 @@ async def main():
 
     max_concurrent = args.max_concurrent
     await process_queue(
-        read_jsonl(args.tasks),
+        read_jsonl(file_path),
         worker_func=sample_and_write_result,
         max_concurrent=max_concurrent,
     )

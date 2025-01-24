@@ -8,6 +8,7 @@ import time
 from typing import Any, Iterable, Iterator
 from openai import AsyncOpenAI
 from utils import write_jsonl, process_queue, llm_generate
+from tqdm import tqdm
 
 
 class BasicIntArithmeticTaskConfig:
@@ -102,15 +103,17 @@ class Stats:
 async def sample_concurrent(
     *,
     rng: Random,
-    open_router_client: AsyncOpenAI,
+    client: AsyncOpenAI,
     n: int,
     task_cfg: BasicIntArithmeticTaskConfig,
     developer_prompt: str,
     output_jsonl: str,
     sampling_params: dict,
     max_concurrent: int = 1,
+    api_type: str,
 ):
     stats = Stats()
+    pbar = tqdm(total=n, desc="Sampling progress")
 
     def generate_sampling_jobs() -> Iterator[dict]:
         for i in range(n):
@@ -133,16 +136,19 @@ async def sample_concurrent(
         output_match = False
         output_tag_found = False
         stats.started += 1
+        start_time = time.time()
         try:
             output = await llm_generate(
-                open_router_client,
+                client,
                 input,
                 sampling_params,
+                api_type,
             )
 
             response_text = output.choices[0].message.content
             finish_reason = output.choices[0].finish_reason
-            provider = output.provider
+            provider = getattr(output, 'provider', api_type)
+            completion_time = time.time() - start_time
           
             try:
                 final_answer = re.search(
@@ -171,6 +177,7 @@ async def sample_concurrent(
                 "input": input,
                 "provider": provider,
                 "sampling_params": sampling_params,
+                "completion_time": completion_time,
             }
 
             if output.usage is not None:
@@ -180,27 +187,40 @@ async def sample_concurrent(
             write_jsonl(output_jsonl, [log_data], "a")
 
         except Exception as e:
-            print("Sampling failed:", e)
+            print("sample_cot: Sampling failed:", e)
             time.sleep(1.0)
 
         stats.completed += 1
+        pbar.update(1)
+        pbar.set_postfix({
+            'solved': f"{stats.solved}/{stats.completed}",
+            'rate': f"{stats.solved/stats.completed:.1%}" if stats.completed > 0 else "0%"
+        })
 
         print(
             f"[{index}/{n}] output_tag_found={output_tag_found}, solved={output_match}, num_terms={num_terms}, num_digits={num_digits}, solve_rate={stats.solved}/{stats.completed} "
         )
 
-    await process_queue(
-        job_generator=generate_sampling_jobs(),
-        worker_func=sampling_worker,
-        max_concurrent=max_concurrent,
-    )
+    try:
+        await process_queue(
+            job_generator=generate_sampling_jobs(),
+            worker_func=sampling_worker,
+            max_concurrent=max_concurrent,
+        )
+    finally:
+        pbar.close()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base_url", type=str, default="https://openrouter.ai/api/v1")
+    parser.add_argument("--api_type", type=str, choices=["openrouter", "swissai"], default="openrouter", help="API service to use")
+    parser.add_argument("--api_key_env", type=str, default="OPENROUTER_API_KEY", help="Environment variable name containing the API key")
     parser.add_argument(
-        "--model", type=str, default="meta-llama/llama-3.3-70b-instruct"
+        "--model", 
+        type=str, 
+        default="meta-llama/llama-3.3-70b-instruct",
+        help="Model to use. For SwissAI, use meta-llama/Llama-3.3-70B-Instruct format. For OpenRouter, use meta-llama/llama-3.3-70b-instruct format."
     )
     parser.add_argument("--max_new_tokens", type=int, default=4096)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -209,7 +229,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_concurrent", type=int, default=1)
     parser.add_argument("--provider", type=str, default=None)
     parser.add_argument("--timeout", type=float, default=90.0)
-    parser.add_argument("--system_prompt", type=str, default="./prompts/cot1.txt")
+    parser.add_argument("--system_prompt", type=str, default="cot1.txt")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--min_digits", type=int, default=1)
     parser.add_argument("--max_digits", type=int, default=6)
@@ -224,9 +244,29 @@ async def main():
     args = parse_args()
     rng = Random(args.seed)
 
-    open_router_client = AsyncOpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
+    try:
+        dir = Path(__file__).parent.parent
+    except:
+        dir = Path("..")
+    prompt_filename = str(dir / "prompts" / args.system_prompt)
+    Path(prompt_filename).parent.mkdir(parents=True, exist_ok=True)
+    prompt_file_path = Path(prompt_filename)
+    output_filename = str(dir / "data" / args.output_jsonl)
+    Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
+    output_file_path = Path(output_filename)
+
+    if args.api_type == "swissai":
+        base_url = "https://fmapi.swissai.cscs.ch"
+        api_key_env = "SWISSAI_API_KEY"
+        if "llama-3.3-70b-instruct" in args.model.lower():
+            args.model = "meta-llama/Llama-3.3-70B-Instruct"  # SwissAI format
+    else:
+        base_url = args.base_url
+        api_key_env = args.api_key_env
+
+    client = AsyncOpenAI(
+        base_url=base_url,
+        api_key=os.getenv(api_key_env),
         timeout=args.timeout,
     )
 
@@ -244,8 +284,8 @@ async def main():
         sampling_params["temperature"] = args.temperature
         sampling_params["top_p"] = args.top_p
 
-    # https://openrouter.ai/docs/provider-routing#custom-routing
-    if args.provider is not None:
+    # Add OpenRouter-specific provider routing
+    if args.api_type == "openrouter" and args.provider is not None:
         sampling_params["extra_body"] = {
             "provider": {
                 "order": args.provider.split(","),
@@ -253,10 +293,7 @@ async def main():
             },
         }
 
-    prompt_filename = Path(
-        args.system_prompt
-    )  # e.g. source https://pastebin.com/dQG6JDV4
-    developer_prompt = prompt_filename.read_text()
+    developer_prompt = prompt_file_path.read_text() # e.g. source https://pastebin.com/dQG6JDV4
 
     task_cfg = BasicIntArithmeticTaskConfig(
         min_digits=args.min_digits,
@@ -267,13 +304,14 @@ async def main():
 
     await sample_concurrent(
         rng=rng,
-        open_router_client=open_router_client,
+        client=client,
         n=args.n,
         task_cfg=task_cfg,
         developer_prompt=developer_prompt,
-        output_jsonl=args.output_jsonl,
+        output_jsonl=output_file_path,
         sampling_params=sampling_params,
         max_concurrent=args.max_concurrent,
+        api_type=args.api_type,
     )
 
 
