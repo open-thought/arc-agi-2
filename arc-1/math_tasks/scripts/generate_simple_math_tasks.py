@@ -58,6 +58,7 @@ def main():
     file_path = Path(output_filename)
 
     # If num_tasks is provided via arg, create uniform distributions
+    combinations = None
     if len(sys.argv) > 1:
         # Create all possible combinations of num_terms (2-6) and num_digits (1-6)
         combinations = [(t, d) for t in range(2, 7) for d in range(1, 7)]

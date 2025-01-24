@@ -18,12 +18,13 @@ class BasicIntArithmeticTaskConfig:
         max_digits: int = 5,
         min_terms: int = 2,
         max_terms: int = 8,
+        operators: list[str] = None,
     ):
         self.min_digits = min_digits
         self.max_digits = max_digits
         self.min_terms = min_terms
         self.max_terms = max_terms
-        self.operators = ["+", "-"]
+        self.operators = operators or ["+", "-"]
 
     def validate(self):
         assert self.min_digits > 0
@@ -33,7 +34,7 @@ class BasicIntArithmeticTaskConfig:
         assert len(self.operators) > 0
 
 
-def generate_task(rng: Random, cfg: BasicIntArithmeticTaskConfig) -> str:
+def generate_task(rng: Random, cfg: BasicIntArithmeticTaskConfig) -> tuple[str, str, int, int]:
     num_terms = rng.randint(cfg.min_terms, cfg.max_terms)
     num_digits = rng.randint(cfg.min_digits, cfg.max_digits)
     constants = [rng.randint(0, 10**num_digits) for _ in range(num_terms)]
@@ -111,13 +112,44 @@ async def sample_concurrent(
     sampling_params: dict,
     max_concurrent: int = 1,
     api_type: str,
+    uniform: bool = False,
 ):
     stats = Stats()
     pbar = tqdm(total=n, desc="Sampling progress")
 
+    # Create uniform distribution if requested
+    combinations = None
+    if uniform:
+        combinations = [
+            (t, d) 
+            for t in range(task_cfg.min_terms, task_cfg.max_terms + 1) 
+            for d in range(task_cfg.min_digits, task_cfg.max_digits + 1)
+        ]
+        tasks_per_combo = max(1, n // len(combinations))
+
     def generate_sampling_jobs() -> Iterator[dict]:
         for i in range(n):
-            task, y, num_terms, num_digits = generate_task(rng, task_cfg)
+            if uniform:
+                combo_idx = i // tasks_per_combo
+                if combo_idx >= len(combinations):
+                    # Fall back to random for remaining tasks
+                    num_terms = rng.randint(task_cfg.min_terms, task_cfg.max_terms)
+                    num_digits = rng.randint(task_cfg.min_digits, task_cfg.max_digits)
+                else:
+                    num_terms, num_digits = combinations[combo_idx]
+                # Override the config temporarily for this task
+                temp_cfg = BasicIntArithmeticTaskConfig(
+                    min_digits=num_digits,
+                    max_digits=num_digits,
+                    min_terms=num_terms,
+                    max_terms=num_terms,
+                    operators=task_cfg.operators,
+                )
+            else:
+                temp_cfg = task_cfg
+            
+            task, y, num_terms, num_digits = generate_task(rng, temp_cfg)
+            
             x = build_prompt(developer_prompt=developer_prompt, task=task)
             yield (
                 {
@@ -149,7 +181,7 @@ async def sample_concurrent(
             finish_reason = output.choices[0].finish_reason
             provider = getattr(output, 'provider', api_type)
             completion_time = time.time() - start_time
-          
+
             try:
                 final_answer = re.search(
                     r"<final_answer>(.*?)</final_answer>",
@@ -236,6 +268,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min_terms", type=int, default=2)
     parser.add_argument("--max_terms", type=int, default=10)
     parser.add_argument("--n", type=int, default=1)
+    parser.add_argument("--operators", type=str, default="+,-", help="Comma-separated list of operators to use (e.g. '+,-,*')")
+    parser.add_argument("--uniform", action="store_true", help="Use uniform distribution across term/digit combinations")
     args = parser.parse_args()
     return args
 
@@ -300,6 +334,7 @@ async def main():
         max_digits=args.max_digits,
         min_terms=args.min_terms,
         max_terms=args.max_terms,
+        operators=args.operators.split(","),
     )
 
     await sample_concurrent(
@@ -312,6 +347,7 @@ async def main():
         sampling_params=sampling_params,
         max_concurrent=args.max_concurrent,
         api_type=args.api_type,
+        uniform=args.uniform,
     )
 
 
