@@ -47,7 +47,6 @@ def main():
     rng = Random(42)
 
     num_tasks = int(sys.argv[1]) if len(sys.argv) > 1 else 100_000
-    i = 0
 
     try:
         dir = Path(__file__).parent.parent
@@ -62,10 +61,10 @@ def main():
     if len(sys.argv) > 1:
         # Create all possible combinations of num_terms (2-6) and num_digits (1-6)
         combinations = [(t, d) for t in range(2, 7) for d in range(1, 7)]
-        tasks_per_combo = num_tasks // len(combinations)
+        tasks_per_combo = max(1, num_tasks // len(combinations))
 
     with file_path.open("w", encoding="utf-8") as f:
-        while i < num_tasks:
+        for i in range(num_tasks):
             if combinations:
                 combo_idx = i // tasks_per_combo
                 if combo_idx >= len(combinations):
@@ -105,7 +104,6 @@ def main():
 
             json.dump(entry, f)
             f.write("\n")
-            i += 1
 
 if __name__ == "__main__":
     main()

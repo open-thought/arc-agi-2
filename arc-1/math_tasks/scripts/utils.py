@@ -12,7 +12,7 @@ async def llm_generate(
     sampling_params: dict[str, Any],
     api_type: str,
 ) -> ChatCompletion:
-    max_retry = 3
+    max_retry = 10
     for trial in range(max_retry):
         try:
             # Add OpenRouter-specific headers only when using OpenRouter
@@ -24,7 +24,7 @@ async def llm_generate(
             )
         except Exception as e:
             print("failure response:", e)
-            await asyncio.sleep(trial * trial)  # quadratic backoff
+            await asyncio.sleep(min(60, 10*trial))  # quadratic backoff
             if trial == max_retry - 1:
                 raise
 

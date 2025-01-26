@@ -6,10 +6,12 @@ from random import Random
 import re
 import time
 from typing import Any, Iterable, Iterator
+from numpy import vecdot
 from openai import AsyncOpenAI
 from utils import write_jsonl, process_queue, llm_generate
 from tqdm import tqdm
 
+_jsonl_lock = asyncio.Lock()
 
 class BasicIntArithmeticTaskConfig:
     def __init__(
@@ -34,10 +36,15 @@ class BasicIntArithmeticTaskConfig:
         assert len(self.operators) > 0
 
 
-def generate_task(rng: Random, cfg: BasicIntArithmeticTaskConfig) -> tuple[str, str, int, int]:
+def generate_task(rng: Random, cfg: BasicIntArithmeticTaskConfig, const_terms: bool = False) -> tuple[str, str, int, int]:
     num_terms = rng.randint(cfg.min_terms, cfg.max_terms)
     num_digits = rng.randint(cfg.min_digits, cfg.max_digits)
-    constants = [rng.randint(0, 10**num_digits) for _ in range(num_terms)]
+    if const_terms:
+        #constants = [rng.randint(10**(num_digits-1), (10**num_digits)-1) for _ in range(num_terms)] # +ve
+        constants = [rng.randint(10**(num_digits-1), (10**num_digits)-1)*(-1)**rng.randint(0, 1) for _ in range(num_terms)] # +ve and -ve
+    else:
+        #constants = [rng.randint(0, (10**num_digits)-1) for _ in range(num_terms)] # +ve
+        constants = [rng.randint(-(10**num_digits)+1, (10**num_digits)-1) for _ in range(num_terms)] # +ve and -ve
     operators = [rng.choice(cfg.operators) for _ in range(num_terms - 1)]
 
     buffer = []
@@ -113,9 +120,11 @@ async def sample_concurrent(
     max_concurrent: int = 1,
     api_type: str,
     uniform: bool = False,
+    const_terms: bool = False,
 ):
     stats = Stats()
     pbar = tqdm(total=n, desc="Sampling progress")
+    results = []  # New list to store results when client is None
 
     # Create uniform distribution if requested
     combinations = None
@@ -148,7 +157,7 @@ async def sample_concurrent(
             else:
                 temp_cfg = task_cfg
             
-            task, y, num_terms, num_digits = generate_task(rng, temp_cfg)
+            task, y, num_terms, num_digits = generate_task(rng, temp_cfg, const_terms)
             
             x = build_prompt(developer_prompt=developer_prompt, task=task)
             yield (
@@ -216,7 +225,8 @@ async def sample_concurrent(
                 log_data["completion_tokens"] = output.usage.completion_tokens
                 log_data["prompt_tokens"] = output.usage.prompt_tokens
 
-            write_jsonl(output_jsonl, [log_data], "a")
+            async with _jsonl_lock:
+                write_jsonl(output_jsonl, [log_data], "a")
 
         except Exception as e:
             print("sample_cot: Sampling failed:", e)
@@ -226,22 +236,45 @@ async def sample_concurrent(
         pbar.update(1)
         pbar.set_postfix({
             'solved': f"{stats.solved}/{stats.completed}",
-            'rate': f"{stats.solved/stats.completed:.1%}" if stats.completed > 0 else "0%"
+            'rate': f"{(stats.solved / stats.completed):.01%}" if stats.completed > 0 else "0%",
+            'num_terms': num_terms,
+            'num_digits': num_digits,
         })
 
-        print(
-            f"[{index}/{n}] output_tag_found={output_tag_found}, solved={output_match}, num_terms={num_terms}, num_digits={num_digits}, solve_rate={stats.solved}/{stats.completed} "
-        )
+        # print(
+        #     f"[{index}/{n}] output_tag_found={output_tag_found}, solved={output_match}, num_terms={num_terms}, num_digits={num_digits}, solve_rate={stats.solved}/{stats.completed} "
+        # )
 
     try:
-        await process_queue(
-            job_generator=generate_sampling_jobs(),
-            worker_func=sampling_worker,
-            max_concurrent=max_concurrent,
-        )
+        if client is None:
+            # Skip LLM calls and just collect task information
+            for job in generate_sampling_jobs():
+                log_data = {
+                    "solved": None,  # No LLM response to check
+                    "output_tag_found": None,
+                    "num_terms": job["num_terms"],
+                    "num_digits": job["num_digits"],
+                    "finish_reason": None,
+                    "ground_truth": job["target"],
+                    "output": None,  # No LLM response
+                    "input": job["input"],
+                    "provider": "Test",
+                    "sampling_params": sampling_params,
+                    "completion_time": None,
+                }
+                results.append(log_data)
+                pbar.update(1)
+        else:
+            await process_queue(
+                job_generator=generate_sampling_jobs(),
+                worker_func=sampling_worker,
+                max_concurrent=max_concurrent,
+            )
     finally:
         pbar.close()
 
+    if client is None:
+        return results  # Return collected data instead of saving to file
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -270,6 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n", type=int, default=1)
     parser.add_argument("--operators", type=str, default="+,-", help="Comma-separated list of operators to use (e.g. '+,-,*')")
     parser.add_argument("--uniform", action="store_true", help="Use uniform distribution across term/digit combinations")
+    parser.add_argument("--const_terms", action="store_true", help="Use constant powers for terms")
     args = parser.parse_args()
     return args
 
@@ -348,6 +382,7 @@ async def main():
         max_concurrent=args.max_concurrent,
         api_type=args.api_type,
         uniform=args.uniform,
+        const_terms=args.const_terms,
     )
 
 
