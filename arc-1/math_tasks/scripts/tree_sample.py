@@ -353,10 +353,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--provider", type=str, default="DeepInfra")
     parser.add_argument("--quantization", type=str, default=None)
+    parser.add_argument("--api_type", type=str, choices=["openrouter", "swissai"], default="openrouter", help="API service to use")
+    parser.add_argument("--api_key_env", type=str, default="OPENROUTER_API_KEY", help="Environment variable name containing the API key")
     parser.add_argument("--timeout", type=float, default=90.0)
-    parser.add_argument("--base_url", type=str, default="https://openrouter.ai/api/v1")
     parser.add_argument(
-        "--model", type=str, default="meta-llama/llama-3.3-70b-instruct"
+        "--model", type=str, default="meta-llama/llama-3.3-70b-instruct",
+        help="Model to use. For SwissAI, use meta-llama/Llama-3.3-70B-Instruct format. For OpenRouter, use meta-llama/llama-3.3-70b-instruct format."
     )
     parser.add_argument("--exploration", type=float, default=1.0, help="exploration weight")
     parser.add_argument("--max_concurrent", type=int, default=1)
@@ -372,9 +374,18 @@ async def main():
     args = parse_args()
     rng = Random(args.seed)
 
-    open_router_client = AsyncOpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
+    if args.api_type == "swissai":
+        base_url = "https://fmapi.swissai.cscs.ch"
+        api_key_env = "SWISSAI_API_KEY"
+        if "llama-3.3-70b-instruct" in args.model.lower():
+            args.model = "meta-llama/Llama-3.3-70B-Instruct"  # SwissAI format
+    else:
+        base_url = "https://openrouter.ai/api/v1"
+        api_key_env = args.api_key_env
+
+    client = AsyncOpenAI(
+        base_url=base_url,
+        api_key=os.getenv(api_key_env),
         timeout=args.timeout,
     )
 
@@ -383,15 +394,17 @@ async def main():
         "max_tokens": 4096,
     }
 
-    sampling_params["extra_body"] = {
-        "provider": {
+    # Add OpenRouter-specific provider routing
+    if args.api_type == "openrouter":
+        provider_config = {
             "require_parameters": True,
-            "order": args.provider.split(","),
+            "order": args.provider.split(",") if args.provider else [],
             "allow_fallbacks": False,
-        },
-    }
-    if args.quantization:
-        sampling_params["extra_body"]["provider"]["quantizations"] = args.quantization
+        }
+        if args.quantization:
+            provider_config["quantizations"] = args.quantization
+        
+        sampling_params["extra_body"] = {"provider": provider_config}
 
     num_rollouts = args.num_rollouts
     max_depth = args.max_depth
@@ -433,7 +446,7 @@ async def main():
         s = MctsSearch(
             task_prompt=task_prompt,
             ground_truth=ground_truth,
-            client=open_router_client,
+            client=client,
             sampling_params=sampling_params,
             rollouts_filename=output_path / f"{id}_rollouts.jsonl",
             max_depth=max_depth,
@@ -448,7 +461,7 @@ async def main():
                 if (i + 1) % tree_dump_interval == 0:
                     write_json(tree_filename, s.dump_tree())
             except Exception as e:
-                print("Sampling failed:", e)
+                print("tree_sample: Sampling failed:", e)
                 await asyncio.sleep(1.0)
 
         write_json(tree_filename, s.dump_tree())

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from random import Random
-
+import sys
 
 def generate_math_task(
     rng: Random, num_terms: int, num_digits: int, op: list[str] = ["+", "-", "*"]
@@ -43,19 +43,40 @@ def generate_math_task(
 
     return term, ground_truth
 
-
 def main():
     rng = Random(42)
 
-    num_tasks = 100_000
-    i = 0
+    num_tasks = int(sys.argv[1]) if len(sys.argv) > 1 else 100_000
 
-    output_filename = "math_tasks.jsonl"
+    try:
+        dir = Path(__file__).parent.parent
+    except:
+        dir = Path("..")
+    output_filename = str(dir / "data" / "math_tasks.jsonl")
+    Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
     file_path = Path(output_filename)
+
+    # If num_tasks is provided via arg, create uniform distributions
+    combinations = None
+    if len(sys.argv) > 1:
+        # Create all possible combinations of num_terms (2-6) and num_digits (1-6)
+        combinations = [(t, d) for t in range(2, 7) for d in range(1, 7)]
+        tasks_per_combo = max(1, num_tasks // len(combinations))
+
     with file_path.open("w", encoding="utf-8") as f:
-        while i < num_tasks:
-            num_terms = rng.randint(2, 6)
-            num_digits = rng.randint(1, 6)
+        for i in range(num_tasks):
+            if combinations:
+                combo_idx = i // tasks_per_combo
+                if combo_idx >= len(combinations):
+                    num_terms = rng.randint(2, 6)
+                    num_digits = rng.randint(1, 6)
+                else:
+                    num_terms, num_digits = combinations[combo_idx]
+            else:
+                # Original random distribution
+                num_terms = rng.randint(2, 6)
+                num_digits = rng.randint(1, 6)
+
             term, ground_truth = generate_math_task(
                 rng, num_terms=num_terms, num_digits=num_digits
             )
@@ -83,8 +104,6 @@ def main():
 
             json.dump(entry, f)
             f.write("\n")
-            i += 1
-
 
 if __name__ == "__main__":
     main()
