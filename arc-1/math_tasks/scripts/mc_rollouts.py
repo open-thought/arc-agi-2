@@ -6,7 +6,9 @@ import re
 from typing import Optional
 
 from openai import AsyncOpenAI
-from utils import write_jsonl, process_queue, llm_generate
+from utils import write_jsonl, process_queue, llm_generate, UnifiedClient
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 
 
 supervisor_developer_prompt = """You are the supervisor of an apprentice assistant. You provide instructions and guidance to help them fulfill user requests efficiently and successfully.
@@ -112,7 +114,10 @@ def add_temperature_setting(
 
 
 async def generate_thought_sequence(
-    task_prompt: str, client: AsyncOpenAI, sampling_params: dict, max_depth: int = 10
+    task_prompt: str, 
+    client: UnifiedClient,
+    sampling_params: dict, 
+    max_depth: int = 10
 ) -> None:
     instruction_trace = []
     thought_trace = []
@@ -180,7 +185,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--provider", type=str, default="DeepInfra")
-    parser.add_argument("--api_type", type=str, choices=["openrouter", "swissai"], default="openrouter", help="API service to use")
+    parser.add_argument("--api_type", type=str, choices=["openrouter", "swissai", "local"], default="openrouter", help="API service to use")
     parser.add_argument("--api_key_env", type=str, default="OPENROUTER_API_KEY", help="Environment variable name containing the API key")
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("--base_url", type=str, default="https://openrouter.ai/api/v1")
@@ -198,16 +203,20 @@ async def main():
     args = parse_args()
     rng = Random(args.seed)
 
+    # Configure base URL and API key based on API type
     if args.api_type == "swissai":
         base_url = "https://fmapi.swissai.cscs.ch"
         api_key_env = "SWISSAI_API_KEY"
         if "llama-3.3-70b-instruct" in args.model.lower():
             args.model = "meta-llama/Llama-3.3-70B-Instruct"  # SwissAI format
     else:
-        base_url = "https://openrouter.ai/api/v1"
+        base_url = args.base_url
         api_key_env = args.api_key_env
 
-    client = AsyncOpenAI(
+    # Create unified client
+    client = UnifiedClient.create(
+        api_type=args.api_type,
+        model=args.model,
         base_url=base_url,
         api_key=os.getenv(api_key_env),
         timeout=args.timeout,

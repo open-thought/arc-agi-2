@@ -5,11 +5,13 @@ from pathlib import Path
 from random import Random
 import re
 import time
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, Callable
 from numpy import vecdot
 from openai import AsyncOpenAI
-from utils import write_jsonl, process_queue, llm_generate
+from utils import write_jsonl, process_queue, llm_generate, UnifiedClient
 from tqdm import tqdm
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 
 _jsonl_lock = asyncio.Lock()
 
@@ -111,7 +113,7 @@ class Stats:
 async def sample_concurrent(
     *,
     rng: Random,
-    client: AsyncOpenAI,
+    client: UnifiedClient,
     n: int,
     task_cfg: BasicIntArithmeticTaskConfig,
     developer_prompt: str,
@@ -182,8 +184,7 @@ async def sample_concurrent(
             output = await llm_generate(
                 client,
                 input,
-                sampling_params,
-                api_type,
+                sampling_params
             )
 
             response_text = output.choices[0].message.content
@@ -279,7 +280,10 @@ async def sample_concurrent(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base_url", type=str, default="https://openrouter.ai/api/v1")
-    parser.add_argument("--api_type", type=str, choices=["openrouter", "swissai"], default="openrouter", help="API service to use")
+    parser.add_argument("--api_type", type=str, 
+                       choices=["openrouter", "swissai", "local"],
+                       default="openrouter",
+                       help="API service to use")
     parser.add_argument("--api_key_env", type=str, default="OPENROUTER_API_KEY", help="Environment variable name containing the API key")
     parser.add_argument(
         "--model", 
@@ -323,6 +327,7 @@ async def main():
     Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
     output_file_path = Path(output_filename)
 
+    # Configure base URL and API key based on API type
     if args.api_type == "swissai":
         base_url = "https://fmapi.swissai.cscs.ch"
         api_key_env = "SWISSAI_API_KEY"
@@ -332,10 +337,13 @@ async def main():
         base_url = args.base_url
         api_key_env = args.api_key_env
 
-    client = AsyncOpenAI(
+    # Create unified client
+    client = UnifiedClient.create(
+        api_type=args.api_type,
+        model=args.model,
         base_url=base_url,
         api_key=os.getenv(api_key_env),
-        timeout=args.timeout,
+        timeout=args.timeout
     )
 
     # meta-llama/llama-3.2-3b-instruct
