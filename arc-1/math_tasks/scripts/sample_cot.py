@@ -294,7 +294,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_new_tokens", type=int, default=4096)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top_p", type=float, default=0.9)
-    parser.add_argument("--output_jsonl", type=str, default="output.jsonl")
+    parser.add_argument("--output_jsonl", type=str, default=None)
     parser.add_argument("--max_concurrent", type=int, default=1)
     parser.add_argument("--provider", type=str, default=None)
     parser.add_argument("--timeout", type=float, default=90.0)
@@ -316,17 +316,6 @@ async def main():
     args = parse_args()
     rng = Random(args.seed)
 
-    try:
-        dir = Path(__file__).parent.parent
-    except:
-        dir = Path("..")
-    prompt_filename = str(dir / "prompts" / args.system_prompt)
-    Path(prompt_filename).parent.mkdir(parents=True, exist_ok=True)
-    prompt_file_path = Path(prompt_filename)
-    output_filename = str(dir / "data" / args.output_jsonl)
-    Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
-    output_file_path = Path(output_filename)
-
     # Configure base URL and API key based on API type
     if args.api_type == "swissai":
         base_url = "https://fmapi.swissai.cscs.ch"
@@ -336,6 +325,19 @@ async def main():
     else:
         base_url = args.base_url
         api_key_env = args.api_key_env
+
+    try:
+        parent_dir = Path(__file__).parent.parent
+    except:
+        parent_dir = Path("..")
+    if args.output_jsonl is None:
+        args.output_jsonl = str(f"{args.model.split('/')[-1]}_{args.api_type}_{os.path.basename(args.system_prompt).split('.')[0]}.jsonl")
+    prompt_filename = str(parent_dir / "prompts" / args.system_prompt)
+    prompt_file_path = Path(prompt_filename)
+    output_filename = str(parent_dir / "data" / args.output_jsonl)
+    Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
+    output_file_path = Path(output_filename)
+
 
     # Create unified client
     client = UnifiedClient.create(
