@@ -123,10 +123,10 @@ async def local_llm_generate(
             max_length=sampling_params.get("max_tokens", 4096)
         )
 
-        print(f"Starting generation at: {time.strftime('%H:%M:%S')}")
+        # print(f"Starting generation at: {time.strftime('%H:%M:%S')}")
 
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
-        with torch.inference_mode(), torch.amp.autocast('cuda'):
+        with torch.inference_mode(): # torch.amp.autocast('cuda'):
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=sampling_params.get("max_tokens", 4096),
