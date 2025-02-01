@@ -8,7 +8,7 @@ import time
 from typing import Any, Iterable, Iterator, Callable
 from numpy import vecdot
 from openai import AsyncOpenAI
-from utils import write_jsonl, process_queue, llm_generate, UnifiedClient
+from utils import process_queue, llm_generate, UnifiedClient, read_jsonl, write_jsonl
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
@@ -124,53 +124,89 @@ async def sample_concurrent(
     uniform: bool = False,
     const_terms: bool = False,
 ):
-    stats = Stats()
-    pbar = tqdm(total=n, desc="Sampling progress")
-    results = []  # New list to store results when client is None
-
     # Create uniform distribution if requested
     combinations = None
+    remaining_combos = None
+    total_existing = 0
     if uniform:
         combinations = [
-            (t, d) 
+            (t, d)
             for t in range(task_cfg.min_terms, task_cfg.max_terms + 1) 
             for d in range(task_cfg.min_digits, task_cfg.max_digits + 1)
         ]
+
         tasks_per_combo = max(1, n // len(combinations))
+        remaining_combos = {(t, d): tasks_per_combo for t, d in combinations}
+        counts = {(t, d): 0 for t, d in combinations}
+
+        # Count existing samples from jsonl and update remaining_combos
+        try:
+            # Read and count existing samples
+            for entry in read_jsonl(output_jsonl):
+                try:
+                    t, d = entry['num_terms'], entry['num_digits']
+                    if (t, d) in counts: counts[(t, d)] += 1
+                    if (t, d) in remaining_combos and remaining_combos[(t, d)] > 0: remaining_combos[(t, d)] -= 1
+                except KeyError:
+                    continue
+
+            # Calculate total existing samples based on remaining_combos consumption
+            total_existing = (tasks_per_combo * len(combinations)) - sum(remaining_combos.values())
+            print(f"Found {total_existing} finished samples. ", end="")
+
+            # Print distribution of existing samples
+            print("Existing sample counts (x: num_terms, y: num_digits):")
+            num_terms_labels = list(range(task_cfg.min_terms, task_cfg.max_terms + 1))
+            num_digits_labels = list(range(task_cfg.min_digits, task_cfg.max_digits + 1))
+            print(f"{'':<4}", end="")
+            for t in num_terms_labels:
+                print(f"{t:^9}", end="")
+            print()
+            for d in num_digits_labels:
+                print(f"{d:<4}", end="")
+                for t in num_terms_labels:
+                    completed = counts.get((t, d), 0)
+                    cell_text = f"{completed:>4}/{tasks_per_combo:<4}"
+                    print(f"{cell_text:<8}", end="")
+                print()
+            for key in [key for key, count in remaining_combos.items() if count <= 0]:
+                remaining_combos.pop(key)
+
+        except (FileNotFoundError, TypeError):
+            print("No existing samples found")
+
+    stats = Stats()
+    pbar = tqdm(total=n, initial=total_existing, desc="Sampling progress")
+    results = []  # New list to store results when client is None
 
     def generate_sampling_jobs() -> Iterator[dict]:
-        for i in range(n):
-            if uniform:
-                combo_idx = i // tasks_per_combo
-                if combo_idx >= len(combinations):
-                    # Fall back to random for remaining tasks
-                    num_terms = rng.randint(task_cfg.min_terms, task_cfg.max_terms)
-                    num_digits = rng.randint(task_cfg.min_digits, task_cfg.max_digits)
-                else:
-                    num_terms, num_digits = combinations[combo_idx]
-                # Override the config temporarily for this task
-                temp_cfg = BasicIntArithmeticTaskConfig(
-                    min_digits=num_digits,
-                    max_digits=num_digits,
-                    min_terms=num_terms,
-                    max_terms=num_terms,
-                    operators=task_cfg.operators,
-                )
-            else:
-                temp_cfg = task_cfg
-            
+        remaining_jobs = n - total_existing
+
+        for job_index in range(remaining_jobs):
+            temp_cfg = task_cfg
+
+            if uniform and remaining_combos:
+                if (chosen_combo:=next(iter(remaining_combos.items()), (None, None))[0]) is not None:
+                    num_terms, num_digits = chosen_combo
+                    temp_cfg = BasicIntArithmeticTaskConfig(
+                        min_digits=num_digits,
+                        max_digits=num_digits,
+                        min_terms=num_terms,
+                        max_terms=num_terms,
+                        operators=task_cfg.operators
+                    )
+                    remaining_combos[chosen_combo] -= 1
+                    if remaining_combos[chosen_combo] <= 0: remaining_combos.pop(chosen_combo)
+
             task, y, num_terms, num_digits = generate_task(rng, temp_cfg, const_terms)
-            
             x = build_prompt(developer_prompt=developer_prompt, task=task)
-            yield (
-                {
-                    "index": i,
-                    "input": x,
-                    "target": y,
-                    "num_terms": num_terms,
-                    "num_digits": num_digits,
-                }
-            )
+            yield {
+                "index": job_index,
+                "input": x,
+                "target": y,
+                "num_terms": num_terms,
+                "num_digits": num_digits,
+            }
 
     async def sampling_worker(
         *, index: int, input: str, target: str, num_terms: int, num_digits: int
@@ -226,8 +262,9 @@ async def sample_concurrent(
                 log_data["completion_tokens"] = output.usage.completion_tokens
                 log_data["prompt_tokens"] = output.usage.prompt_tokens
 
-            async with _jsonl_lock:
-                write_jsonl(output_jsonl, [log_data], "a")
+            if output_jsonl is not None:
+                async with _jsonl_lock:
+                    write_jsonl(output_jsonl, [log_data], "a")
 
         except Exception as e:
             print("sample_cot: Sampling failed:", e)
@@ -308,6 +345,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--operators", type=str, default="+,-", help="Comma-separated list of operators to use (e.g. '+,-,*')")
     parser.add_argument("--uniform", action="store_true", help="Use uniform distribution across term/digit combinations")
     parser.add_argument("--const_terms", action="store_true", help="Use constant powers for terms")
+    parser.add_argument("--no_save", action="store_true", help="Do not save results to jsonl")
     args = parser.parse_args()
     return args
 
@@ -334,9 +372,12 @@ async def main():
         args.output_jsonl = str(f"{args.model.split('/')[-1]}_{args.api_type}_{os.path.basename(args.system_prompt).split('.')[0]}.jsonl")
     prompt_filename = str(parent_dir / "prompts" / args.system_prompt)
     prompt_file_path = Path(prompt_filename)
-    output_filename = str(parent_dir / "data" / args.output_jsonl)
-    Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
-    output_file_path = Path(output_filename)
+    if args.no_save:
+        output_file_path = None
+    else:
+        output_filename = str(parent_dir / "data" / args.output_jsonl)
+        Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
+        output_file_path = Path(output_filename)
 
 
     # Create unified client
