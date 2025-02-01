@@ -37,7 +37,6 @@ class BasicIntArithmeticTaskConfig:
         assert self.max_terms >= self.min_terms
         assert len(self.operators) > 0
 
-
 def generate_task(rng: Random, cfg: BasicIntArithmeticTaskConfig, const_terms: bool = False) -> tuple[str, str, int, int]:
     num_terms = rng.randint(cfg.min_terms, cfg.max_terms)
     num_digits = rng.randint(cfg.min_digits, cfg.max_digits)
@@ -89,7 +88,6 @@ def generate_task(rng: Random, cfg: BasicIntArithmeticTaskConfig, const_terms: b
 
     return formatted_task, str(ground_truth), num_terms, num_digits
 
-
 def build_prompt(
     developer_prompt: str, task: str, developer_role: str = "system"
 ) -> list:
@@ -102,13 +100,11 @@ def build_prompt(
     ]
     return messages
 
-
 class Stats:
     def __init__(self):
         self.started = 0
         self.completed = 0
         self.solved = 0
-
 
 async def sample_concurrent(
     *,
@@ -208,80 +204,93 @@ async def sample_concurrent(
                 "num_digits": num_digits,
             }
 
-    async def sampling_worker(
-        *, index: int, input: str, target: str, num_terms: int, num_digits: int
-    ) -> str:
+    async def sampling_worker(*, batch=None, **kwargs):
+        """Worker that handles either single jobs or batches"""
+        pbar.set_postfix({
+            'solved': f"{stats.solved}/{stats.completed}",
+            'rate': f"{(stats.solved / stats.completed):.01%}" if stats.completed > 0 else "0%",
+            'num_terms': batch[0]['num_terms'] if batch is not None else kwargs['num_terms'],
+            'num_digits': batch[0]['num_digits'] if batch is not None else kwargs['num_digits'],
+        })
+        if batch is not None:
+            # Handle batch case
+            batch_messages = [job["input"] for job in batch]
+            start_time = time.time()
+            outputs = await llm_generate(client, batch_messages, sampling_params)
+            completion_time = (time.time() - start_time)/len(batch)
 
+            # Process each result in the batch
+            batch_results = []
+            for job, output in zip(batch, outputs):
+                result = await process_single_output(job, output, stats, pbar, output_jsonl, completion_time)
+                batch_results.append(result)
+            return batch_results
+        else:
+            # Handle single job case
+            start_time = time.time()
+            output = await llm_generate(client, kwargs["input"], sampling_params)
+            completion_time = time.time() - start_time
+            return await process_single_output(kwargs, output, stats, pbar, output_jsonl, completion_time)
+
+    async def process_single_output(job, output, stats, pbar, output_jsonl, completion_time=None):
+        """Process a single output and update stats"""
         output_match = False
         output_tag_found = False
         stats.started += 1
-        start_time = time.time()
+
+        response_text = output.choices[0].message.content
+        finish_reason = output.choices[0].finish_reason
+        provider = getattr(output, 'provider', api_type)
         try:
-            output = await llm_generate(
-                client,
-                input,
-                sampling_params
-            )
+            final_answer = re.search(
+                r"<final_answer>(.*?)</final_answer>",
+                response_text,
+                flags=re.DOTALL,
+            ).group(1)
+            output_tag_found = True
+            if final_answer.find(job["target"]) >= 0:
+                output_match = True
+        except:
+            pass
 
-            response_text = output.choices[0].message.content
-            finish_reason = output.choices[0].finish_reason
-            provider = getattr(output, 'provider', api_type)
-            completion_time = time.time() - start_time
-
-            try:
-                final_answer = re.search(
-                    r"<final_answer>(.*?)</final_answer>",
-                    response_text,
-                    flags=re.DOTALL,
-                ).group(1)
-                output_tag_found = True
-
-                if final_answer.find(target) >= 0:
-                    output_match = True
-            except:
-                pass
-
-            if output_match:
-                stats.solved += 1
-
-            log_data = {
-                "solved": output_match,
-                "output_tag_found": output_tag_found,
-                "num_terms": num_terms,
-                "num_digits": num_digits,
-                "finish_reason": finish_reason,
-                "ground_truth": target,
-                "output": response_text,
-                "input": input,
-                "provider": provider,
-                "sampling_params": sampling_params,
-                "completion_time": completion_time,
-            }
-
-            if output.usage is not None:
-                log_data["completion_tokens"] = output.usage.completion_tokens
-                log_data["prompt_tokens"] = output.usage.prompt_tokens
-
-            if output_jsonl is not None:
-                async with _jsonl_lock:
-                    write_jsonl(output_jsonl, [log_data], "a")
-
-        except Exception as e:
-            print("sample_cot: Sampling failed:", e)
-            time.sleep(1.0)
-
+        if output_match:
+            stats.solved += 1
         stats.completed += 1
+
+        log_data = {
+            "solved": output_match,
+            "output_tag_found": output_tag_found,
+            "num_terms": job["num_terms"],
+            "num_digits": job["num_digits"],
+            "finish_reason": finish_reason,
+            "ground_truth": job["target"],
+            "output": response_text,
+            "input": job["input"],
+            "provider": provider,
+            "sampling_params": sampling_params,
+            "completion_time": completion_time,
+        }
+
+        if output.usage is not None:
+            log_data["completion_tokens"] = output.usage.completion_tokens
+            log_data["prompt_tokens"] = output.usage.prompt_tokens
+
+        if output_jsonl is not None:
+            async with _jsonl_lock:
+                write_jsonl(output_jsonl, [log_data], "a")
+
         pbar.update(1)
         pbar.set_postfix({
             'solved': f"{stats.solved}/{stats.completed}",
             'rate': f"{(stats.solved / stats.completed):.01%}" if stats.completed > 0 else "0%",
-            'num_terms': num_terms,
-            'num_digits': num_digits,
+            'num_terms': job['num_terms'],
+            'num_digits': job['num_digits'],
         })
 
         # print(
         #     f"[{index}/{n}] output_tag_found={output_tag_found}, solved={output_match}, num_terms={num_terms}, num_digits={num_digits}, solve_rate={stats.solved}/{stats.completed} "
         # )
+        return log_data
 
     try:
         if client is None:
@@ -307,6 +316,7 @@ async def sample_concurrent(
                 job_generator=generate_sampling_jobs(),
                 worker_func=sampling_worker,
                 max_concurrent=max_concurrent,
+                batch_enabled=client.api_type == "local" and max_concurrent > 1
             )
     finally:
         pbar.close()
@@ -349,7 +359,6 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     return args
 
-
 async def main():
     args = parse_args()
     rng = Random(args.seed)
@@ -378,7 +387,6 @@ async def main():
         output_filename = str(parent_dir / "data" / args.output_jsonl)
         Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
         output_file_path = Path(output_filename)
-
 
     # Create unified client
     client = UnifiedClient.create(
@@ -435,7 +443,6 @@ async def main():
         uniform=args.uniform,
         const_terms=args.const_terms,
     )
-
 
 if __name__ == "__main__":
     asyncio.run(main())

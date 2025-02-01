@@ -92,63 +92,81 @@ class UnifiedClient:
 async def local_llm_generate(
     model,
     tokenizer,
-    messages: list[dict],
+    messages: list,  # (list of dict) or batch (list of list of dict)
     sampling_params: dict
 ) -> Any:
-    """Generate text using a local model"""
+    """Generate text using a local model, supporting batched input when messages is a list of message lists"""
     try:
-        if not hasattr(tokenizer, 'chat_template') or tokenizer.chat_template is None:
-            text = ""
-            for msg in messages:
-                if msg["role"] == "system":
-                    text += f"System: {msg['content']}\n\n"
-                elif msg["role"] == "user":
-                    text += f"User: {msg['content']}\n\n"
-                elif msg["role"] == "assistant":
-                    text += f"Assistant: {msg['content']}\n"
-            text += "Assistant: "
-        else:
-            text = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
+        def prepare_text(msgs: list[dict]) -> str:
+            if not hasattr(tokenizer, 'chat_template') or tokenizer.chat_template is None:
+                text_str = ""
+                for msg in msgs:
+                    if msg["role"] == "system":
+                        text_str += f"System: {msg['content']}\n\n"
+                    elif msg["role"] == "user":
+                        text_str += f"User: {msg['content']}\n\n"
+                    elif msg["role"] == "assistant":
+                        text_str += f"Assistant: {msg['content']}\n"
+                text_str += "Assistant: "
+                return text_str
+            else:
+                return tokenizer.apply_chat_template(
+                    msgs,
+                    tokenize=False,
+                    add_generation_prompt=True
+                )
+
+        def generate_completion(input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+            with torch.inference_mode(): # torch.amp.autocast('cuda'):
+                return model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=sampling_params.get("max_tokens", 4096),
+                    temperature=sampling_params.get("temperature", 0.1),
+                    top_p=sampling_params.get("top_p", 0.9),
+                    pad_token_id=tokenizer.pad_token_id,
+                    do_sample=sampling_params.get("temperature", 0.1) > 0,
+                    # use_cache=True
+                )
+
+        def create_completion(output: torch.Tensor, input_length: int) -> LocalChatCompletion:
+            response = tokenizer.decode(output[input_length:])
+            return LocalChatCompletion(
+                choices=[Choice(
+                    message=Message(content=response.replace(tokenizer.eos_token, "").replace(tokenizer.pad_token, "")),
+                    finish_reason="stop" if response.rstrip(tokenizer.pad_token).endswith(tokenizer.eos_token) else "length"
+                )],
+                usage=Usage(
+                    completion_tokens=len(output) - input_length,
+                    prompt_tokens=input_length
+                )
             )
 
-        # Pre-process inputs
+        is_batch = isinstance(messages, list) and messages and isinstance(messages[0], list)
+        texts = [prepare_text(msg) for msg in messages] if is_batch else [prepare_text(messages)]
+
+        # Tokenize inputs
         inputs = tokenizer(
-            text,
+            texts,
             return_tensors="pt",
             padding=True,
             truncation=True,
             max_length=sampling_params.get("max_tokens", 4096)
         )
 
-        # print(f"Starting generation at: {time.strftime('%H:%M:%S')}")
+        attention_mask = (inputs["input_ids"] != tokenizer.pad_token_id).long()
 
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
-        with torch.inference_mode(): # torch.amp.autocast('cuda'):
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=sampling_params.get("max_tokens", 4096),
-                temperature=sampling_params.get("temperature", 0.1),
-                top_p=sampling_params.get("top_p", 0.9),
-                pad_token_id=tokenizer.eos_token_id,
-                do_sample=sampling_params.get("temperature", 0.1) > 0,
-                # use_cache=True
-            )
+        attention_mask = attention_mask.to(model.device)
+        outputs = generate_completion(inputs["input_ids"], attention_mask)
 
-        response = tokenizer.decode(outputs[0][len(inputs["input_ids"][0]):])
+        # Create completion objects
+        completions = [
+            create_completion(output, len(inputs["input_ids"][i]))
+            for i, output in enumerate(outputs)
+        ]
 
-        return LocalChatCompletion(
-            choices=[Choice(
-                message=Message(content=response.replace(tokenizer.eos_token, "")),
-                finish_reason="stop" if response.endswith(tokenizer.eos_token) else "length"
-            )],
-            usage=Usage(
-                completion_tokens=len(outputs[0]) - len(inputs["input_ids"][0]),
-                prompt_tokens=len(inputs["input_ids"][0])
-            )
-        )
+        return completions if is_batch else completions[0]
 
     except Exception as e:
         print(f"utils.py: Error during generation: {str(e)}")
@@ -183,31 +201,58 @@ async def llm_generate(
                 raise
 
 async def process_queue(
-    job_generator: Iterator[Any], worker_func: Callable, max_concurrent: int = 3
+    job_generator: Iterator[Any],
+    worker_func: Callable,
+    max_concurrent: int = 3,
+    batch_enabled: bool = False
 ) -> list:
     """
-    Process jobs with limited concurrency.
-
+    Process jobs with limited concurrency, supporting both single and batched processing.
+    
     Args:
         job_generator: Iterator yielding jobs to process
-        worker_func: Async function to process each job
-        max_concurrent: Maximum number of concurrent jobs
+        worker_func: Async function to process each job or batch of jobs
+        max_concurrent: Maximum number of concurrent jobs/batches
+        batch_enabled: Whether to batch jobs (True for local client with max_concurrent > 1)
     """
     pending = set()
     results = []
+    jobs = job_generator
+
+    if batch_enabled:
+        jobs = []
+        current_batch = []
+
+        for job in job_generator:
+            current_batch.append(job)
+            if len(current_batch) >= max_concurrent:
+                jobs.append(current_batch)
+                current_batch = []
+        if current_batch:  # Don't forget the last partial batch
+            jobs.append(current_batch)
 
     async def run_job(job):
         try:
-            result = await worker_func(**job)
-            results.append(result)
+            if batch_enabled:
+                # For batched mode, job is a list of jobs
+                result = await worker_func(**{"batch": job} if len(job) > 1 else job[0])
+            else:
+                # For non-batched mode, job is a single job dict
+                result = await worker_func(**job)
+
+            # Handle both single results and batch results
+            if isinstance(result, list):
+                results.extend(result)
+            else:
+                results.append(result)
         finally:
             pending.discard(task)
 
     try:
-        for job in job_generator:
+        for job in jobs:
             task = asyncio.create_task(run_job(job))
             pending.add(task)
-            
+
             if len(pending) >= max_concurrent:
                 done, _ = await asyncio.wait(
                     pending,
