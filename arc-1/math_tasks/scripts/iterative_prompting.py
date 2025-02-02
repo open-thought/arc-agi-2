@@ -7,7 +7,9 @@ import re
 from typing import Optional
 
 from openai import AsyncOpenAI
-from utils import write_jsonl, process_queue, llm_generate, read_jsonl
+from utils import write_jsonl, process_queue, llm_generate, read_jsonl, UnifiedClient
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 
 
 revision_agent_developer_prompt = """You are a stateful reasoning agent who iteratively progresses towards producing an excellent answer for given user requests. Your state is a thought trajectory which you can manipulate, e.g. by adding revising or deleting thoughts.
@@ -113,7 +115,7 @@ def parseInt(value) -> Optional[int]:
 
 
 async def generate_thought_sequence_basic(
-    task_prompt: str, client: AsyncOpenAI, sampling_params: dict, max_depth: int = 10
+    task_prompt: str, client: UnifiedClient, sampling_params: dict, max_depth: int = 10
 ) -> None:
     steps = []
     final_answer = None
@@ -142,7 +144,7 @@ async def generate_thought_sequence_basic(
 
 
 async def generate_thought_sequence_simple(
-    task_prompt: str, client: AsyncOpenAI, sampling_params: dict, max_depth: int = 10
+    task_prompt: str, client: UnifiedClient, sampling_params: dict, max_depth: int = 10
 ) -> None:
     thought_trace = []
     final_answer = None
@@ -178,7 +180,7 @@ async def generate_thought_sequence_simple(
 
 
 async def generate_thought_sequence_revision(
-    task_prompt: str, client: AsyncOpenAI, sampling_params: dict, max_depth: int = 10
+    task_prompt: str, client: UnifiedClient, sampling_params: dict, max_depth: int = 10
 ) -> None:
     thought_trace = []
     final_answer = None
@@ -255,7 +257,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--provider", type=str, default="DeepInfra")
-    parser.add_argument("--api_type", type=str, choices=["openrouter", "swissai"], default="openrouter", help="API service to use")
+    parser.add_argument("--api_type", type=str, choices=["openrouter", "swissai", "local"], default="openrouter", help="API service to use")
     parser.add_argument("--api_key_env", type=str, default="OPENROUTER_API_KEY", help="Environment variable name containing the API key")
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument(
@@ -284,6 +286,7 @@ async def main():
     Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
     file_path = Path(output_filename)
 
+    # Configure base URL and API key based on API type
     if args.api_type == "swissai":
         base_url = "https://fmapi.swissai.cscs.ch"
         api_key_env = "SWISSAI_API_KEY"
@@ -293,7 +296,10 @@ async def main():
         base_url = "https://openrouter.ai/api/v1"
         api_key_env = args.api_key_env
 
-    client = AsyncOpenAI(
+    # Create unified client
+    client = UnifiedClient.create(
+        api_type=args.api_type,
+        model=args.model,
         base_url=base_url,
         api_key=os.getenv(api_key_env),
         timeout=args.timeout,
