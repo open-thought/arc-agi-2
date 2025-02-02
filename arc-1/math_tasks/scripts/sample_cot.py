@@ -173,6 +173,12 @@ async def sample_concurrent(
 
     stats = Stats()
     pbar = tqdm(total=n, initial=total_existing, desc="Sampling progress")
+    pbar.set_postfix({
+        'solved': f"{stats.solved}/{stats.completed}",
+        'rate': f"{(stats.solved / stats.completed):.01%}" if stats.completed > 0 else "0%",
+        'num_terms': None,
+        'num_digits': None,
+    })
     results = []  # New list to store results when client is None
 
     def generate_sampling_jobs() -> Iterator[dict]:
@@ -220,17 +226,20 @@ async def sample_concurrent(
             completion_time = (time.time() - start_time)/len(batch)
 
             # Process each result in the batch
-            batch_results = []
+            result = []
             for job, output in zip(batch, outputs):
-                result = await process_single_output(job, output, stats, pbar, output_jsonl, completion_time)
-                batch_results.append(result)
-            return batch_results
+                result_n = await process_single_output(job, output, stats, pbar, output_jsonl, completion_time)
+                result.append(result_n)
+            pbar.update(len(batch))
         else:
             # Handle single job case
             start_time = time.time()
             output = await llm_generate(client, kwargs["input"], sampling_params)
             completion_time = time.time() - start_time
-            return await process_single_output(kwargs, output, stats, pbar, output_jsonl, completion_time)
+            result = await process_single_output(kwargs, output, stats, pbar, output_jsonl, completion_time)
+            pbar.update(1)
+
+        return result
 
     async def process_single_output(job, output, stats, pbar, output_jsonl, completion_time=None):
         """Process a single output and update stats"""
@@ -278,14 +287,6 @@ async def sample_concurrent(
         if output_jsonl is not None:
             async with _jsonl_lock:
                 write_jsonl(output_jsonl, [log_data], "a")
-
-        pbar.update(1)
-        pbar.set_postfix({
-            'solved': f"{stats.solved}/{stats.completed}",
-            'rate': f"{(stats.solved / stats.completed):.01%}" if stats.completed > 0 else "0%",
-            'num_terms': job['num_terms'],
-            'num_digits': job['num_digits'],
-        })
 
         # print(
         #     f"[{index}/{n}] output_tag_found={output_tag_found}, solved={output_match}, num_terms={num_terms}, num_digits={num_digits}, solve_rate={stats.solved}/{stats.completed} "

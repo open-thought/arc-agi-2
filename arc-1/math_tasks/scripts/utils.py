@@ -131,13 +131,14 @@ async def local_llm_generate(
 
         def create_completion(output: torch.Tensor, input_length: int) -> LocalChatCompletion:
             response = tokenizer.decode(output[input_length:])
+            generated_tokens = len(output) - input_length
             return LocalChatCompletion(
                 choices=[Choice(
                     message=Message(content=response.replace(tokenizer.eos_token, "").replace(tokenizer.pad_token, "")),
-                    finish_reason="stop" if response.rstrip(tokenizer.pad_token).endswith(tokenizer.eos_token) else "length"
+                    finish_reason = "length" if generated_tokens >= sampling_params.get("max_tokens", 4096) else "stop" if tokenizer.eos_token in response else "unknown"
                 )],
                 usage=Usage(
-                    completion_tokens=len(output) - input_length,
+                    completion_tokens=generated_tokens,
                     prompt_tokens=input_length
                 )
             )
